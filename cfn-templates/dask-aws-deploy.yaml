@@ -956,7 +956,7 @@ Resources:
             response = EC2.describe_images(
                 Owners=['099720109477'],
                 Filters=[
-                  {'Name': 'name', 'Values': [AMI_VENDOR_STRING_1804]},
+                  {'Name': 'name', 'Values': [AMI_VENDOR_STRING_1604]},
                   {'Name': 'architecture', 'Values': ['x86_64']},
                   {'Name': 'root-device-type', 'Values': ['ebs']},
                 ],
