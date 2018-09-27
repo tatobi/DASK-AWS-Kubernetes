@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: dask
+    component: scheduler
+    heritage: Tiller
+    release: __REPLACE_CLUSTERNAME__
+  name: __REPLACE_CLUSTERNAME__-dask-scheduler
+  selfLink: /api/v1/namespaces/default/services/__REPLACE_CLUSTERNAME__-dask-scheduler
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-internal: 0.0.0.0/0
+spec:
+  externalTrafficPolicy: Cluster
+  ports:
+  - name: __REPLACE_CLUSTERNAME__-dask-webui
+    port: 80
+    protocol: TCP
+    targetPort: 8787
+  - name: __REPLACE_CLUSTERNAME__-dask-scheduler
+    port: 8786
+    protocol: TCP
+    targetPort: 8786
+  selector:
+    app: dask
+    component: scheduler
+    release: __REPLACE_CLUSTERNAME__
+  sessionAffinity: None
+  type: LoadBalancer
+
+

@@ -1,0 +1,22 @@
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: dask-https-ingress
+  namespace: default
+  labels:
+    run: dask-https-ingress
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/successCodes: 301,302,200,401,403,404
+    alb.ingress.kubernetes.io/security-groups: __REPLACE_SGS__
+spec:
+  rules:
+  - host: __REPLACE_HOST_NAME__
+    http:
+      paths:
+      - path: /*
+        backend:
+          serviceName: __REPLACE_JUPYTER_SERVICE_NAME__
+          servicePort: 80
+

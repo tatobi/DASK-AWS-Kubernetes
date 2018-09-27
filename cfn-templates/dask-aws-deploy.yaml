@@ -1,0 +1,1577 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 
+  AWS Kubernetes (K8s) / KOPS CFN stack template with DASK,  
+  Single AZ Bastion for K8s easy access,
+  Single AZ Kubernetes Mastser,
+  Cluster autocaling enabled,
+  Private Multi-AZ VPC,
+  Private Kubernets cluster,
+  S3FS mount with goofys,
+  SPOT usage, 
+  Copyright Tamas Tobi / GitHUB @tatobi, 2018'
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: AWS VPC Configuration
+      Parameters:
+      - VPCIPv4CIDRBlock
+      - AdminIngressLocation
+    - Label:
+        default: AWS EC2 / Kubernetes Configuration
+      Parameters:
+      - Ec2KeyPairName
+      - Ec2BastionInstanceType
+      - Ec2K8sMasterInstanceType
+      - Ec2K8sNodeInstanceType
+      - Ec2K8sNodeCapacitySPOTPrice
+      - Ec2K8sNodeCapacityMin
+      - Ec2K8sNodeCapacityMax
+      - Ec2EBSK8sDiskSizeGb
+      - S3BootstrapBucketName
+      - S3BootstrapBucketPrefix
+      - S3MountBucketName
+      - KOPSRelease
+      - KUBECTLRelease
+      - HELMRelease
+    - Label:
+        default: Advanced DASK Configuration
+      Parameters:
+      - DASKJupyterPassword
+      - DASKJupyterECRImage
+      - DASKWorkerECRImage
+      - DASKFinishedSetupSNSArn
+      - DASKInstallExtraPackages
+
+
+    ParameterLabels:
+      VPCIPv4CIDRBlock:
+        default: Creates a new VPC with defined CIDR block
+      AdminIngressLocation:
+        default: DASK / Bastion Allowed Access Location - IPv4 range
+      Ec2KeyPairName:
+        default: Existing EC2 keypair name for instances
+      Ec2BastionInstanceType:
+        default: Bastion instance type
+      Ec2K8sMasterInstanceType:
+        default: K8s Master Instances Type
+      Ec2K8sNodeInstanceType:
+        default: K8s Nodes Instances Type
+      Ec2K8sNodeCapacityMin:
+        default: K8s AutoScaling MINIMUM Node Number
+      Ec2K8sNodeCapacityMax:
+        default: K8s AutoScaling MAXIMUM Node Number (If Autoscaling Plugin enabled!)
+      Ec2EBSK8sDiskSizeGb:
+        default: K8s Instances Disk Size (GB)
+      S3BootstrapBucketName:
+        default: S3 bucket NAME for CFN Bootstrap Files
+      S3BootstrapBucketPrefix:
+        default: S3 key prefix for CFN Bootstrap Files
+      S3MountBucketName:
+        default: "DASK mounted S3 bucket name to work subfolder (every node)"
+      DASKJupyterECRImage:
+        default: "Custom DASK Jupyter Docker AWS ECR  image name (docker.io or ECR)"
+      DASKWorkerECRImage:
+        default: "Custom DASK Worker Docker AWS ECR  image name (dokcer.io or ECR)"
+      DASKJupyterPassword:
+        default: "Password for access DASK JupyterLab notebook"
+      DASKFinishedSetupSNSArn:
+        default: "AWS SNS topic ARN for DASK setup finsihed notifications"
+      Ec2K8sNodeCapacitySPOTPrice:
+        default: "MAX Bid price /h for NODEs (if 0, or 0.0 or negative NOT applied - runs on-demand)"
+      DASKInstallExtraPackages:
+        default: "Comma separated list of install Python PIP packages on all DASK Pods"
+      KOPSRelease:
+        default: "KOPS relese number"
+      KUBECTLRelease:
+        default: "kubectl release number"
+      HELMRelease:
+        default: "helm release number"
+
+Parameters:
+  VPCIPv4CIDRBlock:
+    Description: /16. Create a new VPC with a CIDR block.
+    Type: String
+    Default: 10.211.0.0
+    AllowedValues:
+      - 10.211.0.0
+      - 10.212.0.0
+      - 10.213.0.0
+      - 10.214.0.0
+      - 10.215.0.0
+    ConstraintDescription: '/16. must be a valid, not existing IPv4 CIDR block.'
+
+  AdminIngressLocation:
+    Description: CIDR block (IP address range) to allow SSH/VPN access to the 
+      bastion host. Use 0.0.0.0/0 to allow access from all locations.
+    Type: String
+    Default: '0.0.0.0/0'
+    MinLength: 9
+    MaxLength: 18
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+    ConstraintDescription: must be a valid IPv4 CIDR range of the form x.x.x.x/x.
+
+
+  Ec2KeyPairName:
+    Description: Existing EC2 KeyPair for SSH access on Bastion host.
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+
+  Ec2BastionInstanceType:
+    Description: EC2 type for the Bastion instance.
+    Type: String
+    Default: t3.micro
+    AllowedValues:
+    - t3.micro
+    - t3.small
+    - t3.medium
+    - t3.large
+    - t2.micro
+    - t2.small
+    - t2.medium
+    - t2.large
+    - m5.large
+    - m5.xlarge
+    - m5.2xlarge
+    - c5.large
+    - c5.xlarge
+    - c5.2xlarge
+    ConstraintDescription: must be a valid EC2 instance type.
+    
+  Ec2K8sMasterInstanceType:
+    Description: EC2 type for the K8s Master instance(s).
+    Type: String
+    Default: t2.small
+    AllowedValues:
+    - t2.small
+    - t2.medium
+    - t2.large
+    - t2.xlarge
+    - t2.2xlarge
+    - m5.large
+    - m5.xlarge
+    - m5.2xlarge
+    - c5.large
+    - c5.xlarge
+    - c5.2xlarge
+    ConstraintDescription: must be a valid EC2 instance type.
+
+  Ec2K8sNodeInstanceType:
+    Description: EC2 type for the K8s Node instance(s).
+    Type: String
+    Default: m4.large
+    AllowedValues:
+    - t2.small
+    - t2.medium
+    - t2.large
+    - t2.xlarge
+    - t2.2xlarge
+    - m4.large
+    - m4.xlarge
+    - m4.2xlarge
+    - m4.4xlarge
+    - m5.large
+    - m5.xlarge
+    - m5.2xlarge
+    - m5.4xlarge
+    - c4.large
+    - c4.xlarge
+    - c4.2xlarge
+    - c4.4xlarge
+    - c5.large
+    - c5.xlarge
+    - c5.2xlarge
+    - c5.4xlarge
+    - r5.large
+    - r5.xlarge
+    - r5.2xlarge
+    - r5.4xlarge
+    - r4.large
+    - r4.xlarge
+    - r4.2xlarge
+    - r4.4xlarge
+    ConstraintDescription: must be a valid EC2 instance type.
+
+  Ec2K8sNodeCapacityMin:
+    Default: '3'
+    Description: The initial number of Kubernetes Node Instances
+    Type: Number
+    MinValue: '3'
+    MaxValue: '100'
+    ConstraintDescription: must be between 1 and 10 EC2 instances.
+    
+  Ec2K8sNodeCapacityMax:
+    Default: '100'
+    Description: The MAXIMUM number of Kubernetes Node Instances
+    Type: Number
+    MinValue: '3'
+    MaxValue: '1000'
+    ConstraintDescription: must be between 1 and 10 EC2 instances.
+
+  Ec2EBSK8sDiskSizeGb:
+    Description: 'Size of the root disk for the K8s EC2 instances, in GiB.  Default: 50'
+    Default: 70
+    Type: Number
+    MinValue: 60
+    MaxValue: 1024
+
+  S3BootstrapBucketName:
+    AllowedPattern: "^[0-9a-zA-Z]+([0-9a-zA-Z-]*[0-9a-zA-Z])*$"
+    ConstraintDescription: Bootstrap S3 bucket name can include numbers, lowercase
+      letters, uppercase letters, and hyphens (-). It cannot start or end with a hyphen
+      (-).
+
+    Default: opensatori-dask-github-bootstrap
+    Description: Bootstrap Scripts in S3 for K8s cluster creation
+    Type: String
+  
+  S3BootstrapBucketPrefix:
+    AllowedPattern: "^[0-9a-zA-Z-]+(/[0-9a-zA-Z-]+)*$"
+    ConstraintDescription: Bootstrap S3 key prefix can include numbers, lowercase letters,
+      uppercase letters, hyphens (-), and forward slash (/). It cannot start or end
+      with forward slash (/) because they are automatically appended.
+    Default: latest
+    Description: Folder (key) path within bootstrap S3 bucket
+    Type: String
+    
+  S3MountBucketName:
+    ConstraintDescription: Mounted S3 bucket name to DASK cluster everywhere under ~/work subfolder.
+    Default: ""
+    Description: my own S3 bucket name to mount
+    Type: String
+
+
+  DASKJupyterECRImage:
+    ConstraintDescription: Custom DASK Jupyter Docker image.
+    Default: daskdev/dask-notebook
+    Description: Custom DASK Jupyter Docker image ECR name
+    Type: String
+    
+  DASKWorkerECRImage:
+    ConstraintDescription: Custom DASK Worker-Scheduler Docker image.
+    Default: daskdev/dask
+    Description: Custom DASK Worker Docker image ECR name
+    Type: String
+
+  DASKJupyterPassword:
+    AllowedPattern: "^[0-9a-zA-Z]+([0-9a-zA-Z-]*[0-9a-zA-Z])*$"
+    ConstraintDescription: Jupyter password can include numbers, lowercase
+      letters, uppercase letters, and hyphens (-). It cannot start or end with a hyphen
+      (-).
+    MinLength: 12
+    Default: sophohch7siwuphu
+    Description: DASK JupyterLab notebook password
+    Type: String
+    
+  DASKFinishedSetupSNSArn:
+    ConstraintDescription: Notify AWS SNS subsriptions (email) when DASK setup finished.
+    Default: ""
+    Description: DASK deployed SNS notification ARN
+    Type: String
+
+  Ec2K8sNodeCapacitySPOTPrice:
+    ConstraintDescription: "If not ZERO or negative, K8s NODES running with SPOT to save money. Specify maximum bid price per hour here."
+    Default: "0.12"
+    Description: "AWS EC2 SPOT price in $"
+    Type: String
+
+  DASKInstallExtraPackages:
+    ConstraintDescription: "Install extra Python PIP packages on DASK Pods list, comma separated"
+    Default: "boto3, awscli, numpy, scipy, matplotlib"
+    Description: "matplotlib, boto, etc..."
+    Type: String
+
+  KOPSRelease:
+    MinLength: 3
+    Default: 1.10.0
+    Description: KOPS release version
+    Type: String
+    
+  KUBECTLRelease:
+    MinLength: 3
+    Default: 1.10.7
+    Description: kubectl release version
+    Type: String
+
+  HELMRelease:
+    MinLength: 3
+    Default: 2.10.0
+    Description: helm release version
+    Type: String
+
+########################################################
+# VPC subnet mappings for VPC networkig setup
+########################################################
+
+Mappings:
+  SubnetConfig:
+    10.201.0.0:
+      Subnet1CIDR: 10.211.0.0/20
+      Subnet2CIDR: 10.211.16.0/20
+      Subnet3CIDR: 10.211.32.0/20
+      Subnet4CIDR: 10.211.48.0/20
+      Subnet5CIDR: 10.211.64.0/20
+      Subnet6CIDR: 10.211.80.0/20
+    10.202.0.0:
+      Subnet1CIDR: 10.212.0.0/20
+      Subnet2CIDR: 10.212.16.0/20
+      Subnet3CIDR: 10.212.32.0/20
+      Subnet4CIDR: 10.212.48.0/20
+      Subnet5CIDR: 10.212.64.0/20
+      Subnet6CIDR: 10.212.80.0/20
+    10.203.0.0:
+      Subnet1CIDR: 10.213.0.0/20
+      Subnet2CIDR: 10.213.16.0/20
+      Subnet3CIDR: 10.213.32.0/20
+      Subnet4CIDR: 10.213.48.0/20
+      Subnet5CIDR: 10.213.64.0/20
+      Subnet6CIDR: 10.213.80.0/20
+    10.204.0.0:
+      Subnet1CIDR: 10.214.0.0/20
+      Subnet2CIDR: 10.214.16.0/20
+      Subnet3CIDR: 10.214.32.0/20
+      Subnet4CIDR: 10.214.48.0/20
+      Subnet5CIDR: 10.214.64.0/20
+      Subnet6CIDR: 10.214.80.0/20
+    10.205.0.0:
+      Subnet1CIDR: 10.215.0.0/20
+      Subnet2CIDR: 10.215.16.0/20
+      Subnet3CIDR: 10.215.32.0/20
+      Subnet4CIDR: 10.215.48.0/20
+      Subnet5CIDR: 10.215.64.0/20
+      Subnet6CIDR: 10.215.80.0/20
+
+
+########################################################
+# Regional AZs for VPC networkig setup
+########################################################
+
+  AWSRegion2AZ:
+    eu-central-1:
+      Name: Frankfurt
+      NumAZs: '3'
+      AZ0: '0'
+      AZ1: '1'
+      AZ2: '2'
+    eu-west-1:
+      Name: Ireland
+      NumAZs: '3'
+      AZ0: '0'
+      AZ1: '1'
+      AZ2: '2'
+    eu-west-2:
+      Name: London
+      NumAZs: '3'
+      AZ0: '0'
+      AZ1: '1'
+      AZ2: '2'
+    eu-west-3:
+      Name: Paris
+      NumAZs: '3'
+      AZ0: '0'
+      AZ1: '1'
+      AZ2: '2'
+    us-east-1:
+      Name: N. Virgina
+      NumAZs: '6'
+      AZ0: '3'
+      AZ1: '4'
+      AZ2: '5'
+    us-east-2:
+      Name: Ohio
+      NumAZs: '3'
+      AZ0: '0'
+      AZ1: '1'
+      AZ2: '2'
+    us-west-1:
+      Name: N. California
+      NumAZs: '3'
+      AZ0: '0'
+      AZ1: '1'
+      AZ2: '2'
+    us-west-2:
+      Name: Oregon
+      NumAZs: '3'
+      AZ0: '0'
+      AZ1: '1'
+      AZ2: '2'
+    ap-south-1:
+      Name: Mumbai
+      NumAZs: '2'
+      AZ0: '0'
+      AZ1: '1'
+      AZ2: '0'
+    ap-southeast-1:
+      Name: Singapore
+      NumAZs: '3'
+      AZ0: '0'
+      AZ1: '1'
+      AZ2: '2'
+    ap-southeast-2:
+      Name: Sydney
+      NumAZs: '3'
+      AZ0: '0'
+      AZ1: '1'
+      AZ2: '2'
+    ap-northeast-1:
+      Name: Tokyo
+      NumAZs: '4'
+      AZ0: '0'
+      AZ1: '1'
+      AZ2: '2'
+    ap-northeast-2:
+      Name: Seoul
+      NumAZs: '2'
+      AZ0: '0'
+      AZ1: '1'
+      AZ2: '0'
+    sa-east-1:
+      Name: Sao Paulo
+      NumAZs: '3'
+      AZ0: '0'
+      AZ1: '1'
+      AZ2: '2'
+    ca-central-1:
+      Name: Canada Central
+      NumAZs: '2'
+      AZ0: '0'
+      AZ1: '1'
+      AZ2: '0'
+
+Resources:
+
+########################################################
+# Networking Configuration
+# Private VPC, private subnets
+# NAT instance: the bastion host 
+########################################################
+
+  VPC:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: !Sub "${VPCIPv4CIDRBlock}/16"
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+      - Key: Name
+        Value: !Sub "${AWS::StackName} VPC"
+      - Key: KubernetesCluster
+        Value: !Ref AWS::StackName
+  
+  PublicSubnet1:
+    DependsOn:
+      - VPC
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap 
+        - SubnetConfig
+        - !Ref VPCIPv4CIDRBlock
+        - Subnet1CIDR
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select 
+        - !FindInMap 
+          - AWSRegion2AZ
+          - !Ref 'AWS::Region'
+          - AZ0
+        - !GetAZs 
+          Ref: 'AWS::Region'
+      Tags:
+      - Key: Name
+        Value: !Sub "${AWS::StackName} publicsubnet1"
+      - Key: KubernetesCluster
+        Value: !Ref AWS::StackName
+      - Key: kubernetes.io/role/alb-ingress
+        Value: ''
+    
+  PublicSubnet2:
+    DependsOn:
+      - VPC
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap 
+        - SubnetConfig
+        - !Ref VPCIPv4CIDRBlock
+        - Subnet2CIDR
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select 
+        - !FindInMap 
+          - AWSRegion2AZ
+          - !Ref 'AWS::Region'
+          - AZ1
+        - !GetAZs 
+          Ref: 'AWS::Region'
+      Tags:
+      - Key: Name
+        Value: !Sub "${AWS::StackName} publicsubnet2"
+      - Key: KubernetesCluster
+        Value: !Ref AWS::StackName
+      - Key: kubernetes.io/role/alb-ingress
+        Value: ''
+        
+  PublicSubnet3:
+    DependsOn:
+      - VPC
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap 
+        - SubnetConfig
+        - !Ref VPCIPv4CIDRBlock
+        - Subnet3CIDR
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select 
+        - !FindInMap 
+          - AWSRegion2AZ
+          - !Ref 'AWS::Region'
+          - AZ2
+        - !GetAZs 
+          Ref: 'AWS::Region'
+      Tags:
+      - Key: Name
+        Value: !Sub "${AWS::StackName} publicsubnet3"
+      - Key: KubernetesCluster
+        Value: !Ref AWS::StackName
+      - Key: kubernetes.io/role/alb-ingress
+        Value: ''
+
+  PrivateSubnet1:
+    DependsOn:
+      - VPC
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap 
+        - SubnetConfig
+        - !Ref VPCIPv4CIDRBlock
+        - Subnet4CIDR
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select 
+        - !FindInMap 
+          - AWSRegion2AZ
+          - !Ref 'AWS::Region'
+          - AZ1
+        - !GetAZs 
+          Ref: 'AWS::Region'
+      Tags:
+      - Key: Name
+        Value: !Sub "${AWS::StackName} privatesubnet1"
+      - Key: KubernetesCluster
+        Value: !Ref AWS::StackName
+          
+  PrivateSubnet2:
+    DependsOn:
+      - VPC
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap 
+        - SubnetConfig
+        - !Ref VPCIPv4CIDRBlock
+        - Subnet5CIDR
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select 
+        - !FindInMap 
+          - AWSRegion2AZ
+          - !Ref 'AWS::Region'
+          - AZ2
+        - !GetAZs 
+          Ref: 'AWS::Region'
+      Tags:
+      - Key: Name
+        Value: !Sub "${AWS::StackName} privatesubnet2"
+      - Key: KubernetesCluster
+        Value: !Ref AWS::StackName
+        
+  PrivateSubnet3:
+    DependsOn:
+      - VPC
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap 
+        - SubnetConfig
+        - !Ref VPCIPv4CIDRBlock
+        - Subnet6CIDR
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select 
+        - !FindInMap 
+          - AWSRegion2AZ
+          - !Ref 'AWS::Region'
+          - AZ0
+        - !GetAZs 
+          Ref: 'AWS::Region'
+      Tags:
+      - Key: Name
+        Value: !Sub "${AWS::StackName} privatesubnet3"
+      - Key: KubernetesCluster
+        Value: !Ref AWS::StackName
+
+  InternetGateway:
+    DependsOn:
+      - VPC
+      - PublicSubnet1
+      - PublicSubnet2
+      - PublicSubnet3
+      - PrivateSubnet1
+      - PrivateSubnet2
+      - PrivateSubnet3
+    Type: 'AWS::EC2::InternetGateway'
+    Properties:
+      Tags:
+      - Key: Name
+        Value: !Sub "${AWS::StackName} InternetGateway"
+      - Key: KubernetesCluster
+        Value: !Ref AWS::StackName
+  
+  GatewayToVPCAssociation:
+    DependsOn:
+      - VPC
+      - InternetGateway
+      - PublicSubnet1
+      - PublicSubnet2
+      - PublicSubnet3
+      - PrivateSubnet1
+      - PrivateSubnet2
+      - PrivateSubnet3
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+  
+  PublicRouteTable:
+    DependsOn:
+      - VPC
+      - PublicSubnet1
+      - PublicSubnet2
+      - PublicSubnet3
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+      - Key: Name
+        Value: !Sub "${AWS::StackName} PublicRouteTable"
+      - Key: KubernetesCluster
+        Value: !Ref AWS::StackName
+    
+  PublicRoute:
+    DependsOn:
+      - PublicRouteTable
+      - InternetGateway
+      - GatewayToVPCAssociation
+      - VPC
+      - PublicSubnet1
+      - PublicSubnet2
+      - PublicSubnet3
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  
+  
+  PublicSubnetRouteTableAssociation1:
+    DependsOn:
+      - PublicSubnet1
+      - PublicRouteTable
+      - VPC
+      - PublicRoute
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+  
+  
+  PublicSubnetRouteTableAssociation2:
+    DependsOn:
+      - PublicSubnet2
+      - PublicRouteTable
+      - VPC
+      - PublicRoute
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+      
+  PublicSubnetRouteTableAssociation3:
+    DependsOn:
+      - PublicSubnet3
+      - PublicRouteTable
+      - VPC
+      - PublicRoute
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PublicSubnet3
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateRouteTable1:
+    DependsOn:
+      - VPC
+      - PrivateSubnet1
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+      - Key: Name
+        Value: !Sub "${AWS::StackName} PrivateRouteTable1"
+      - Key: KubernetesCluster
+        Value: !Ref AWS::StackName
+    
+      
+  PrivateRouteTable2:
+    DependsOn:
+      - VPC
+      - PrivateSubnet2
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+      - Key: Name
+        Value: !Sub "${AWS::StackName} PrivateRouteTable2"
+      - Key: KubernetesCluster
+        Value: !Ref AWS::StackName
+
+  PrivateRouteTable3:
+    DependsOn:
+      - VPC
+      - PrivateSubnet3
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+      - Key: Name
+        Value: !Sub "${AWS::StackName} PrivateRouteTable3"
+      - Key: KubernetesCluster
+        Value: !Ref AWS::StackName
+  
+  PrivateSubnetRouteTableAssociation1:
+    DependsOn:
+      - PrivateRouteTable1
+      - PrivateSubnet1
+      - VPC
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable1
+  
+  PrivateSubnetRouteTableAssociation2:
+    DependsOn:
+      - PrivateRouteTable2
+      - PrivateSubnet2
+      - VPC
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable2
+      
+  PrivateSubnetRouteTableAssociation3:
+    DependsOn:
+      - PrivateRouteTable3
+      - PrivateSubnet3
+      - VPC
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PrivateSubnet3
+      RouteTableId: !Ref PrivateRouteTable3
+  
+  BastionSecurityGroup:
+    DependsOn:
+      - VPC
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: !Ref AdminIngressLocation
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: !Sub "${VPCIPv4CIDRBlock}/16"
+      VpcId: !Ref VPC
+      GroupDescription: Bastion Instance Security Group
+      GroupName : !Sub "${AWS::StackName} BastionSecurityGroup"
+      
+  DASKSecurityGroup:
+    DependsOn:
+      - VPC
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: !Ref AdminIngressLocation
+        - IpProtocol: tcp
+          FromPort: '443'
+          ToPort: '443'
+          CidrIp: !Ref AdminIngressLocation
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: !Sub "${VPCIPv4CIDRBlock}/16"
+      VpcId: !Ref VPC
+      GroupDescription: DASK Ingress Security Group
+      GroupName : !Sub "${AWS::StackName} DASK Ingress SG"
+  
+  K8sMasterAndNodeSecurityGroup:
+    DependsOn:
+      - VPC
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      SecurityGroupIngress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: !Sub "${VPCIPv4CIDRBlock}/16"
+      VpcId: !Ref VPC
+      GroupDescription: Kubernetes Istances Security Group
+      GroupName : !Sub "${AWS::StackName} Master And Node"
+  
+  VPCEndPointS3:
+    Type: 'AWS::EC2::VPCEndpoint'
+    DependsOn:
+      - VPC
+      - PublicSubnet1
+      - PublicSubnet2
+      - PublicSubnet3
+      - PublicSubnetRouteTableAssociation1
+      - PublicSubnetRouteTableAssociation2
+      - PublicSubnetRouteTableAssociation3
+      - PublicRouteTable
+      - PrivateRouteTable1
+      - PrivateRouteTable2
+      - PrivateRouteTable3
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action: '*'
+            Resource: '*'
+            Principal: '*'
+      RouteTableIds:
+        - !Ref PublicRouteTable
+        - !Ref PrivateRouteTable1
+        - !Ref PrivateRouteTable2
+        - !Ref PrivateRouteTable3
+      ServiceName: !Join  
+        - ''
+        - - com.amazonaws.
+          - !Ref 'AWS::Region'
+          - .s3
+      VpcId: !Ref VPC
+  
+  VPCEndPointDynamoDB:
+    Type: 'AWS::EC2::VPCEndpoint'
+    DependsOn:
+      - VPC
+      - PublicSubnet1
+      - PublicSubnet2
+      - PublicSubnet3
+      - PublicSubnetRouteTableAssociation1
+      - PublicSubnetRouteTableAssociation2
+      - PublicSubnetRouteTableAssociation3
+      - PublicRouteTable
+      - VPCEndPointS3
+      - PrivateRouteTable1
+      - PrivateRouteTable2
+      - PrivateRouteTable3
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        Statement:
+          - Effect: Allow
+            Action: '*'
+            Resource: '*'
+            Principal: '*'
+      RouteTableIds:
+        - !Ref PublicRouteTable
+        - !Ref PrivateRouteTable1
+        - !Ref PrivateRouteTable2
+        - !Ref PrivateRouteTable3
+      ServiceName: !Join 
+        - ''
+        - - com.amazonaws.
+          - !Ref 'AWS::Region'
+          - .dynamodb
+      VpcId: !Ref VPC
+  
+########################################################
+# Bastion / Kubernetes AMI image configuration by Lambda
+# Dynamically determine local Ubuntu AMI for bastion 
+# With Lambda
+########################################################
+  LambdaGetAMIImagesRole:
+    Type: "AWS::IAM::Role"
+    DependsOn:
+      - VPC
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: root
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource: arn:aws:logs:*:*:*
+          - Effect: Allow
+            Action:
+            - ec2:DescribeImages
+            - ec2:Describe*
+            Resource: "*"
+
+  LambdaGetAmiImagesForBastion:
+    Type: "AWS::Lambda::Function"
+    DependsOn:
+      - LambdaGetAMIImagesRole
+    Properties:
+      Code:
+        ZipFile: !Sub |
+          import json
+          import boto3
+          import cfnresponse
+
+          AMI_VENDOR_STRING_1604="ubuntu/images/hvm-ssd/ubuntu-xenial-16.04-amd64-server*"
+          AMI_VENDOR_STRING_1804="ubuntu/images/hvm-ssd/ubuntu-bionic-18.04-amd64-server*"
+
+          def GetLatestAMIID():
+            EC2 = boto3.client('ec2', region_name="${AWS::Region}")
+            response = EC2.describe_images(
+                Owners=['099720109477'],
+                Filters=[
+                  {'Name': 'name', 'Values': [AMI_VENDOR_STRING_1804]},
+                  {'Name': 'architecture', 'Values': ['x86_64']},
+                  {'Name': 'root-device-type', 'Values': ['ebs']},
+                ],
+            )
+
+            amis = sorted(response['Images'],
+                          key=lambda x: x['CreationDate'],
+                          reverse=True)
+            print(amis[0]['ImageId'])
+            return format(amis[0]['ImageId'])
+          
+          def handler(event, context):
+            if event['RequestType'] == 'Delete':
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+              return
+            try:
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, { 'Id': GetLatestAMIID() })
+              return
+            except Exception as e:
+              print(e)
+              cfnresponse.send(event, context, cfnresponse.FAILED, { 'Error': format(e) })
+              return
+          
+      Handler: "index.handler"
+      Runtime: "python3.6"
+      Timeout: "300"
+      Role: !GetAtt LambdaGetAMIImagesRole.Arn
+
+  AMIInfo:
+    Type: Custom::AMIInfo
+    Properties:
+      ServiceToken: !GetAtt LambdaGetAmiImagesForBastion.Arn
+      Region: !Ref "AWS::Region"
+
+
+########################################################
+# Bastion Configuration
+# keep bastion here because
+# for testing Bastion acts as
+# the NAT
+########################################################
+
+#create role
+  BastionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - ec2.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: S3FullAccess
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action: 's3:*'
+              Resource: '*'
+      - PolicyName: EC2FullAccess
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action: 'ec2:*'
+              Resource: '*'
+            - Effect: Allow
+              Action: 'ssm:*'
+              Resource: '*'
+            - Effect: Allow
+              Action: 'ec2messages:*'
+              Resource: '*'
+            - Effect: Allow
+              Action: 'elasticloadbalancing:*'
+              Resource: '*'
+            - Effect: Allow
+              Action: 'cloudwatch:*'
+              Resource: '*'
+            - Effect: Allow
+              Action: 'autoscaling:*'
+              Resource: '*'
+      - PolicyName: IAMFullAccess
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action: 'iam:*'
+              Resource: '*'
+      - PolicyName: CodeDeployFullAccess
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action: 'tag:*'
+              Resource: '*'
+            - Effect: Allow
+              Action: 'codedeploy:*'
+              Resource: '*'
+      - PolicyName: R53FullAccess
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action: 
+              - 'route53:*'
+              - 'route53domains:*'
+              - 'cloudfront:ListDistributions'
+              - 'elasticbeanstalk:DescribeEnvironments'
+              - 'sns:ListTopics'
+              - 'sns:ListSubscriptionsByTopic'
+              Resource: '*'
+      - PolicyName: LogsFullAccess
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action: 'logs:*'
+              Resource: '*'
+      - PolicyName: ECRFullAccess
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action: 'ecr:*'
+              Resource: '*'
+      - PolicyName: KMSFullAccess
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action: 'kms:*'
+              Resource: '*'
+  
+  BastionInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/"
+      Roles:
+      - !Ref BastionRole
+
+  BastionHost:
+    Type: AWS::EC2::Instance
+    DependsOn: 
+    - BastionInstanceProfile
+    - VPC
+    - BastionSecurityGroup
+    - DASKSecurityGroup
+    - PublicSubnetRouteTableAssociation1
+    - PublicSubnetRouteTableAssociation2
+    - PublicSubnetRouteTableAssociation3
+    - PrivateSubnetRouteTableAssociation1
+    - PrivateSubnetRouteTableAssociation2
+    - PrivateSubnetRouteTableAssociation3
+    - PrivateRouteTable1
+    - PrivateRouteTable2
+    - PrivateRouteTable3
+    - VPCEndPointS3
+    - VPCEndPointDynamoDB
+    Properties:
+      ImageId: !GetAtt AMIInfo.Id
+      InstanceType: !Ref Ec2BastionInstanceType
+      SourceDestCheck: false
+      NetworkInterfaces:
+      - AssociatePublicIpAddress: true
+        DeleteOnTermination: true
+        DeviceIndex: 0
+        SubnetId: !Ref PublicSubnet1
+        GroupSet:
+        - Ref: BastionSecurityGroup
+      Tags:
+      - Key: Name
+        Value: !Sub "k8s bastion host ${AWS::StackName}"
+      - Key: KubernetesCluster
+        Value: !Ref AWS::StackName
+      - Key: K8sBastionNumber
+        Value: K8sBastion-01
+      KeyName: !Ref Ec2KeyPairName
+      IamInstanceProfile: !Ref BastionInstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+
+          #update, install necessary software
+          apt-get update
+          apt-get -y install python3-setuptools python3-pip zip
+          pip3 install awscli boto3 pyyaml jupyter
+          
+          #python2 keep for cfn tools
+          apt -y install python-pip python-setuptools
+          pip install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz
+          ln -s /root/aws-cfn-bootstrap-latest/init/ubuntu/cfn-hup /etc/init.d/cfn-hup
+          
+          #install AWS SSM agent
+          if [[ ! -n `ps axu | grep amazon-ssm-agent | grep -v grep` ]]; 
+          then
+            mkdir -p /tmp/ssm
+            cd /tmp/ssm
+            wget https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/debian_amd64/amazon-ssm-agent.deb
+            dpkg -i amazon-ssm-agent.deb
+            systemctl enable amazon-ssm-agent
+            systemctl start amazon-ssm-agent
+          fi
+          
+          touch /tmp/init-kops.log
+          
+          #start cfn service
+          /usr/local/bin/cfn-init -v --stack ${AWS::StackId} --resource BastionHost --region ${AWS::Region}
+          /usr/local/bin/cfn-signal -e $? --stack ${AWS::StackId} --resource BastionHost --region ${AWS::Region}
+          
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          default: 
+          - config-cfn-hup
+        config-cfn-hup:
+          files:
+            #cfn-hup configuration 
+            '/etc/cfn/cfn-hup.conf':
+              content: !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+                interval=1
+            '/etc/cfn/hooks.d/cfn-auto-reloader.conf':
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.BastionHost.Metadata.AWS::CloudFormation::Init
+                action=/usr/local/bin/cfn-init -v --stack ${AWS::StackId} --resource BastionHost --region ${AWS::Region}
+            #systemd service 
+            '/etc/systemd/system/cfn-hup.service': 
+              content: |
+                [Unit]
+                Description=Cloud formation helper daemon
+
+                [Service]
+                ExecStart=/usr/local/bin/cfn-hup
+                Restart=always
+                Type=simple
+
+                [Install]
+                WantedBy=multi-user.target
+            
+            
+            '/opt/bastion-init-host.sh':
+              mode: '000755'
+              owner: "root"
+              group: "root"
+              content: !Sub |
+                #!/bin/bash
+                
+                mkdir -p /opt/bastion-init
+                cd /opt/bastion-init
+                
+                #create routes in private rourte tables
+                instance_id=`curl http://169.254.169.254/latest/meta-data/instance-id`
+                aws ec2 create-route --destination-cidr-block 0.0.0.0/0 --instance-id $instance_id --route-table-id ${PrivateRouteTable1} --region ${AWS::Region}
+                aws ec2 create-route --destination-cidr-block 0.0.0.0/0 --instance-id $instance_id --route-table-id ${PrivateRouteTable2} --region ${AWS::Region}
+                aws ec2 create-route --destination-cidr-block 0.0.0.0/0 --instance-id $instance_id --route-table-id ${PrivateRouteTable3} --region ${AWS::Region}
+                
+                #sync bootstrap scripts
+                aws s3 sync s3://${S3BootstrapBucketName}/${S3BootstrapBucketPrefix}/bootstrap/ ./ --region ${AWS::Region} --quiet
+                
+                #setup bastion host routing
+                chmod +x ./*.sh
+                chmod +x ./*.py
+                ./01-init-bastion-host.sh "${S3BootstrapBucketName}" \
+                 "${S3BootstrapBucketPrefix}" \
+                 "${AWS::Region}" \
+                 "${VPCIPv4CIDRBlock}/16"
+                
+                echo "/opt/bastion-init-host.sh DONE."
+                exit 0
+
+            '/opt/bastion-init-kops.sh':
+              mode: '000755'
+              owner: "root"
+              group: "root"
+              content: !Sub |
+                #!/bin/bash
+
+                cd /opt
+                mkdir -p /opt/kops-state
+                mkdir -p /opt/kops-config
+                cd /opt/bastion-init
+                
+                self_ami_id=`curl http://169.254.169.254/latest/meta-data/ami-id`
+                
+                ./04-init-kops.sh "${AWS::Region}" \
+                  "${AWS::StackName}" \
+                  "${Ec2K8sMasterInstanceType}" \
+                  "${Ec2K8sNodeInstanceType}" \
+                  "${Ec2K8sNodeCapacityMin}" \
+                  "${Ec2K8sNodeCapacityMax}" \
+                  "${Ec2EBSK8sDiskSizeGb}" \
+                  "${Ec2K8sAMIOsType}" \
+                  "false" \
+                  "${VPC}" \
+                  "${VPCIPv4CIDRBlock}/16" \
+                  "${PrivateSubnet1}" \
+                  "${PrivateSubnet2}" \
+                  "${PrivateSubnet3}" \
+                  "${PublicSubnet1}" \
+                  "${PublicSubnet2}" \
+                  "${PublicSubnet3}" \
+                  "${K8sMasterAndNodeSecurityGroup}" \
+                  "${S3BootstrapBucketName}" \
+                  "${S3BootstrapBucketPrefix}" \
+                  "false" \
+                  "false" \
+                  "true" \
+                  "false" \
+                  "false" \
+                  "false" \
+                  "false" \
+                  "${KOPSReleaseVersion}" \
+                  "${KUBECTLReleaseVersion}" \
+                  "${HELMReleaseVersion}" \
+                  "$self_ami_id" \
+                  "${Ec2K8sNodeCapacitySPOTPrice}" \
+                  "${S3MountBucketName}"
+                
+                echo "/opt/bastion-init-kops.sh DONE."
+                exit 0
+            
+            '/opt/bastion-init-dask.sh':
+              mode: '000755'
+              owner: "root"
+              group: "root"
+              content: !Sub |
+                #!/bin/bash
+                
+                cd /opt/bastion-init
+                
+                ./05-init-dask.sh "${AWS::Region}" \
+                  "${DASKJupyterECRImage}" \
+                  "${DASKWorkerECRImage}" \
+                  "${AWS::StackName}" \
+                  "${DASKSecurityGroup}" \
+                  "${DASKJupyterPassword}" \
+                  "${DASKFinishedSetupSNSArn}" \
+                  "${Ec2K8sNodeCapacityMin}"
+            
+            '/opt/bastion-init-finish.sh':
+              mode: '000755'
+              owner: "root"
+              group: "root"
+              content: !Sub |
+                #!/bin/bash
+                
+                chown -R ubuntu:ubuntu /opt
+                chmod -R og+rwX /opt
+                
+                chown -R ubuntu:ubuntu /home/ubuntu
+                exit 0
+                
+            '/opt/delete-kops-cluster.sh':
+              mode: '000755'
+              owner: "root"
+              group: "root"
+              content: !Sub |
+                #!/bin/bash
+                
+                cd /opt/bastion-init
+                ./tear-down-cluster.sh ${AWS::Region}
+          
+          commands:
+            "00-enable-cfn-hup":
+              command: "systemctl enable cfn-hup.service"
+            "01-start-cfn-hup":
+              command: "systemctl start cfn-hup.service" 
+            "02-init-bastion-host":
+              command: "/opt/bastion-init-host.sh"
+            "03-init-kops":
+              command: "/opt/bastion-init-kops.sh >> /tmp/init-kops.log 2>&1"
+            "04-init-dask":
+              command: "/opt/bastion-init-dask.sh >> /tmp/init-kops.log 2>&1"
+            "05-init-finish":
+              command: "/opt/bastion-init-finish.sh"
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT120M
+
+
+  # This is a CloudWatch alarm https://aws.amazon.com/cloudwatch/
+  # If the Bastion node is unresponsive for 5 minutes, AWS will attempt to recover it
+  BastionRecoveryTestAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DependsOn:
+      - PublicSubnet1
+      - PublicRouteTable
+      - VPC
+      - PublicRoute
+      - BastionHost
+    Properties:
+      AlarmDescription: Trigger a recovery when instance status check fails for 15
+        consecutive minutes.
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed_System
+      Statistic: Minimum
+      # 300-second periods (5 minute)
+      Period: '300'
+      # 5-minute check-ins
+      EvaluationPeriods: '3'
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: '0'
+      # This is the call that actually tries to recover the instance
+      AlarmActions:
+        - !Sub "arn:aws:automate:${AWS::Region}:ec2:recover"
+      # Applies this alarm to our K8sMasterInstance
+      Dimensions:
+      - Name: InstanceId
+        Value: !Ref BastionHost
+        
+###############################################
+# Lambda function for graceful tear-down of KOPS by AWS SSM
+###############################################
+
+  # IAM role for Lambda function for generating kubeadm token
+  LambdaGracefulTearDownRole:
+    Type: "AWS::IAM::Role"
+    DependsOn:
+      - VPC
+      - BastionHost
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+        - Effect: "Allow"
+          Principal:
+            Service: ["lambda.amazonaws.com"]
+          Action: "sts:AssumeRole"
+      Path: "/"
+      Policies:
+      - PolicyName: "lambda_ssm_policy"
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+          - Effect: "Allow"
+            Action:
+              - "logs:CreateLogGroup"
+              - "logs:CreateLogStream"
+              - "logs:PutLogEvents"
+            Resource: "arn:aws:logs:*:*:*"
+          - Effect: "Allow"
+            Action:
+              - 'ssm:DescribeAssociation'
+              - 'ssm:GetDeployablePatchSnapshotForInstance'
+              - 'ssm:GetCommandInvocation'
+              - 'ssm:GetDocument'
+              - 'ssm:GetManifest'
+              - 'ssm:GetParameters'
+              - 'ssm:ListAssociations'
+              - 'ssm:ListInstanceAssociations'
+              - 'ssm:PutInventory'
+              - 'ssm:PutComplianceItems'
+              - 'ssm:PutConfigurePackageResult'
+              - 'ssm:UpdateAssociationStatus'
+              - 'ssm:UpdateInstanceAssociationStatus'
+              - 'ssm:UpdateInstanceInformation'
+            Resource: "*"
+          - Effect: "Allow"
+            Action:
+              - 'ssm:SendCommand'
+            Resource: 
+              - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/${BastionHost}"
+              - !Sub "arn:aws:ssm:${AWS::Region}::document/AWS-RunShellScript"
+          - Effect: Allow
+            Action:
+              - 'ec2messages:AcknowledgeMessage'
+              - 'ec2messages:DeleteMessage'
+              - 'ec2messages:FailMessage'
+              - 'ec2messages:GetEndpoint'
+              - 'ec2messages:GetMessages'
+              - 'ec2messages:SendReply'
+            Resource: '*'
+          - Effect: Allow
+            Action: 's3:*'
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - 'ec2:DescribeSecurityGroups'
+              - 'ec2:AuthorizeSecurityGroupIngress'
+              - 'ec2:RevokeSecurityGroupIngress'
+              - 'ec2:AuthorizeSecurityGroupEgress'
+              - 'ec2:RevokeSecurityGroupEgress'
+              - 'ec2:DescribeTags'
+              - 'ec2:DescribeVpcs'
+              - 'ec2:DescribeAvailabilityZones'
+              - 'ec2:DescribeSubnets'
+              - 'ec2:DescribeInternetGateways'
+              - 'ec2:DescribeEgressOnlyInternetGateways'
+              - 'ec2:DescribeNatGateways'
+              - 'ec2:DescribeRouteTables'
+              - 'ec2:DescribeAddresses'
+              - 'ec2:DescribeNetworkAcls'
+              - 'ec2:DescribeInstances'
+              - 'ec2:DescribeNetworkInterfaces'
+              - 'ec2:AttachNetworkInterface'
+              - 'ec2:CreateNetworkInterface'
+              - 'ec2:DescribeNetworkInterfaceAttribute'
+              - 'ec2:DescribeNetworkInterfaces'
+              - 'ec2:DetachNetworkInterface'
+              - 'ec2:ModifyNetworkInterfaceAttribute'
+              - 'ec2:ResetNetworkInterfaceAttribute'
+              - 'ec2:DeleteNetworkInterface'
+            Resource: '*'
+
+
+  # Lambda Function for graceful kops teardown
+  LambdaGracefulTearDown:
+    Type: "AWS::Lambda::Function"
+    DependsOn:
+      - BastionHost
+      - LambdaGracefulTearDownRole
+    Properties:
+      Code:
+        ZipFile: !Sub |
+          import sys
+          import boto3
+          import cfnresponse
+          import time
+          
+          ssm_exit_statuses=['Success']
+          ssm = boto3.client('ssm', region_name="${AWS::Region}")
+          
+          def ssm_del_k8scluster():
+            instanceID="${BastionHost}"
+            
+            response = ssm.send_command(
+                InstanceIds=[
+                    instanceID
+                ],
+                DocumentName='AWS-RunShellScript',
+                Comment='Graceful tear down Kubernetes / KOPS resources created in CFN template',
+                Parameters={
+                    'commands': [
+                        '/opt/delete-kops-cluster.sh'
+                    ]
+                }
+            )
+            return response
+          
+          def handler(event, context):
+            if event['RequestType'] == 'Delete':
+              r=ssm_del_k8scluster()
+              #print r
+              print time.ctime()
+              commandID=r.get('Command').get('CommandId')
+              print commandID
+              time.sleep(5)
+              for _ in xrange(80):
+                  try:
+                      response = ssm.get_command_invocation(
+                          CommandId=commandID,
+                          InstanceId=instanceID
+                      )
+                      ssm_status=response.get('Status')
+                      print "-----"
+                      print ssm_status
+                      print time.ctime()
+                      if ssm_status in ssm_exit_statuses:
+                         print "SSM Command Finished."
+                         break
+                      time.sleep(3)
+                  except Exception,e:
+                      print e
+                      time.sleep(3)
+                      pass
+              time.sleep(30)
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+              return {"Delete":"OK"}
+            if event['RequestType'] == 'Create':
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+              return {"Create":"OK"}
+              
+      Handler: "index.handler"
+      Runtime: "python2.7"
+      Timeout: "300"
+      Role: !GetAtt LambdaGracefulTearDownRole.Arn
+
+  # A Custom CFN resource that uses the lambda function to invoke SSM
+  LambdaCustomResource:
+    Type: "Custom::CustomResourceType"
+    DependsOn:
+      - BastionHost
+      - LambdaGracefulTearDownRole
+      - LambdaGracefulTearDown
+    Version: "1.0"
+    Properties:
+      ServiceToken: !GetAtt LambdaGracefulTearDown.Arn
+      
+
+Outputs:
+  VPCID:
+    Value: !Ref VPC
+    Description: Created VPC ID
+
+  BastionHostPublicIp:
+    Description: IP Address of the Bastion Host. Use SSH ubuntu@BastionIP to control the cluster.
+    Value: !Sub ${BastionHost.PublicIp}
+
+  JupyterNotenookURL:
+    Description: Check the AWS EC2 WEB console  - Load Balancers menu- DNS
+    Value: URL
+
+  JupyterNotenookPassword:
+    Value: !Sub ${DASKJupyterPassword}
+    
+  BokehURL:
+    Description: Check the AWS EC2 WEB console  - Load Balancers menu - DNS
+    Value: URL
+
