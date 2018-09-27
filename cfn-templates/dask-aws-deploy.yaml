@@ -1225,9 +1225,11 @@ Resources:
                 #sync bootstrap scripts
                 aws s3 sync s3://${S3BootstrapBucketName}/${S3BootstrapBucketPrefix}/bootstrap/ ./ --region ${AWS::Region} --quiet
                 
-                #setup bastion host routing
+                #everything to be executable
                 chmod +x ./*.sh
                 chmod +x ./*.py
+                
+                #setup bastion host routing
                 ./01-init-bastion-host.sh "${S3BootstrapBucketName}" \
                  "${S3BootstrapBucketPrefix}" \
                  "${AWS::Region}" \
@@ -1250,7 +1252,7 @@ Resources:
                 
                 self_ami_id=`curl http://169.254.169.254/latest/meta-data/ami-id`
                 
-                ./04-init-kops.sh "${AWS::Region}" \
+                ./02-init-kops.sh "${AWS::Region}" \
                   "${AWS::StackName}" \
                   "${Ec2K8sMasterInstanceType}" \
                   "${Ec2K8sNodeInstanceType}" \
@@ -1296,7 +1298,7 @@ Resources:
                 
                 cd /opt/bastion-init
                 
-                ./05-init-dask.sh "${AWS::Region}" \
+                ./03-init-dask.sh "${AWS::Region}" \
                   "${DASKJupyterECRImage}" \
                   "${DASKWorkerECRImage}" \
                   "${AWS::StackName}" \
