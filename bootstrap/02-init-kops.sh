@@ -192,6 +192,8 @@ aws ec2 create-tags --resources ${instance_id} --tags Key=KOPS-state-store-bucke
 if [ "${Ec2K8sMultiAZMaster}" == "true" ]; 
 then
 kops create cluster \
+  --admin-access="${NetworkCIDR}" \
+  --ssh-access="${NetworkCIDR}" \
   --name="${K8sClusterName}" \
   --cloud-labels="Name=${K8sClusterName}" \
   ${dns_zone} \
@@ -221,6 +223,8 @@ kops create cluster \
   --output="yaml" > /opt/kops-config/${K8sClusterName}.yaml || exit 1
 else
 kops create cluster \
+  --admin-access="${NetworkCIDR}" \
+  --ssh-access="${NetworkCIDR}" \
   --name="${K8sClusterName}" \
   --cloud-labels="Name=${K8sClusterName}" \
   ${dns_zone} \

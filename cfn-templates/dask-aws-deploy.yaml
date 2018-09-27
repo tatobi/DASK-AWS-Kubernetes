@@ -32,9 +32,9 @@ Metadata:
       - S3BootstrapBucketName
       - S3BootstrapBucketPrefix
       - S3MountBucketName
-      - KOPSRelease
-      - KUBECTLRelease
-      - HELMRelease
+      - KOPSReleaseVersion
+      - KUBECTLReleaseVersion
+      - HELMReleaseVersion
     - Label:
         default: Advanced DASK Configuration
       Parameters:
@@ -82,11 +82,11 @@ Metadata:
         default: "MAX Bid price /h for NODEs (if 0, or 0.0 or negative NOT applied - runs on-demand)"
       DASKInstallExtraPackages:
         default: "Comma separated list of install Python PIP packages on all DASK Pods"
-      KOPSRelease:
+      KOPSReleaseVersion:
         default: "KOPS relese number"
-      KUBECTLRelease:
+      KUBECTLReleaseVersion:
         default: "kubectl release number"
-      HELMRelease:
+      HELMReleaseVersion:
         default: "helm release number"
 
 Parameters:
@@ -222,7 +222,7 @@ Parameters:
       letters, uppercase letters, and hyphens (-). It cannot start or end with a hyphen
       (-).
 
-    Default: opensatori-dask-github-bootstrap
+    Default: tatobi-dask-aws-deploy
     Description: Bootstrap Scripts in S3 for K8s cluster creation
     Type: String
   
@@ -282,19 +282,19 @@ Parameters:
     Description: "matplotlib, boto, etc..."
     Type: String
 
-  KOPSRelease:
+  KOPSReleaseVersion:
     MinLength: 3
     Default: 1.10.0
     Description: KOPS release version
     Type: String
     
-  KUBECTLRelease:
+  KUBECTLReleaseVersion:
     MinLength: 3
     Default: 1.10.7
     Description: kubectl release version
     Type: String
 
-  HELMRelease:
+  HELMReleaseVersion:
     MinLength: 3
     Default: 2.10.0
     Description: helm release version
@@ -306,35 +306,35 @@ Parameters:
 
 Mappings:
   SubnetConfig:
-    10.201.0.0:
+    10.211.0.0:
       Subnet1CIDR: 10.211.0.0/20
       Subnet2CIDR: 10.211.16.0/20
       Subnet3CIDR: 10.211.32.0/20
       Subnet4CIDR: 10.211.48.0/20
       Subnet5CIDR: 10.211.64.0/20
       Subnet6CIDR: 10.211.80.0/20
-    10.202.0.0:
+    10.212.0.0:
       Subnet1CIDR: 10.212.0.0/20
       Subnet2CIDR: 10.212.16.0/20
       Subnet3CIDR: 10.212.32.0/20
       Subnet4CIDR: 10.212.48.0/20
       Subnet5CIDR: 10.212.64.0/20
       Subnet6CIDR: 10.212.80.0/20
-    10.203.0.0:
+    10.213.0.0:
       Subnet1CIDR: 10.213.0.0/20
       Subnet2CIDR: 10.213.16.0/20
       Subnet3CIDR: 10.213.32.0/20
       Subnet4CIDR: 10.213.48.0/20
       Subnet5CIDR: 10.213.64.0/20
       Subnet6CIDR: 10.213.80.0/20
-    10.204.0.0:
+    10.214.0.0:
       Subnet1CIDR: 10.214.0.0/20
       Subnet2CIDR: 10.214.16.0/20
       Subnet3CIDR: 10.214.32.0/20
       Subnet4CIDR: 10.214.48.0/20
       Subnet5CIDR: 10.214.64.0/20
       Subnet6CIDR: 10.214.80.0/20
-    10.205.0.0:
+    10.215.0.0:
       Subnet1CIDR: 10.215.0.0/20
       Subnet2CIDR: 10.215.16.0/20
       Subnet3CIDR: 10.215.32.0/20
@@ -1259,7 +1259,7 @@ Resources:
                   "${Ec2K8sNodeCapacityMin}" \
                   "${Ec2K8sNodeCapacityMax}" \
                   "${Ec2EBSK8sDiskSizeGb}" \
-                  "${Ec2K8sAMIOsType}" \
+                  "ubuntu" \
                   "false" \
                   "${VPC}" \
                   "${VPCIPv4CIDRBlock}/16" \
