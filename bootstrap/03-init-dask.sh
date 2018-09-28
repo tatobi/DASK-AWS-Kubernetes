@@ -4,13 +4,11 @@ echo "#################"
 echo "DASK-INIT START..."
 
 AWSRegion=${1}
-DASKJupyterECRImage=${2}
-DASKWorkerECRImage=${3}
-AWSCfnStackName=${4}
-BastionSecurityGroup=${5}
-DASKJupyterPassword=${6}
-DASKFinishedSetupSNSArn=${7}
-Ec2K8sNodeCapacityMin=${8}
+AWSCfnStackName=${2}
+BastionSecurityGroup=${3}
+DASKJupyterPassword=${4}
+DASKFinishedSetupSNSArn=${5}
+Ec2K8sNodeCapacityMin=${6}
 
 randomstuff=`cat /dev/urandom | tr -dc 'a-z0-9' | head -c 8`
 instance_id=`curl http://169.254.169.254/latest/meta-data/instance-id`

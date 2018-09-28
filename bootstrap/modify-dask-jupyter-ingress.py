@@ -33,7 +33,7 @@ print(dask)
 
 print("Set internal LB ...")
 #dask[0]['spec']['type']='NodePort'
-dask[0]['metadata']['annotations']=[{'service.beta.kubernetes.io/aws-load-balancer-internal': '0.0.0.0/0'},{'service.beta.kubernetes.io/aws-load-balancer-type': 'nlb'}]
+dask[0]['metadata']['annotations']={'service.beta.kubernetes.io/aws-load-balancer-internal': '0.0.0.0/0', 'service.beta.kubernetes.io/aws-load-balancer-type': 'nlb'}
 
 out=yaml.safe_dump_all(dask, default_flow_style=False)
 print(out)

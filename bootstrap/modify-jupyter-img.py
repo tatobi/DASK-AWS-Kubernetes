@@ -22,11 +22,11 @@ except:
 
 
 #custom image
+custom_image=None
 try:
     custom_image=sys.argv[2]
 except:
-    print("define custom_image!")
-    sys.exit(1)
+    pass
     
 #aws region
 try:
@@ -47,8 +47,9 @@ with open(input_file,"r") as f:
 
 dask=list(yl)
 
-print("Set image to: ", custom_image)
-dask[0]['spec']['template']['spec']['containers'][0]['image']=custom_image
+if custom_image:
+    print("Set image to: ", custom_image)
+    dask[0]['spec']['template']['spec']['containers'][0]['image']=custom_image
 
 print("Set POD volume mounts ...")
 dask[0]['spec']['template']['spec']['containers'][0]['volumeMounts'].append({'mountPath': '/home/jovyan/work', 'name': 's3fsmount'})

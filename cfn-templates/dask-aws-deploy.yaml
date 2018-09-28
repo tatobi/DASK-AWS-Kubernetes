@@ -41,8 +41,6 @@ Metadata:
         default: Advanced DASK Configuration
       Parameters:
       - DASKJupyterPassword
-      - DASKJupyterECRImage
-      - DASKWorkerECRImage
       - DASKFinishedSetupSNSArn
       - DASKInstallExtraPackages
 
@@ -51,7 +49,7 @@ Metadata:
       VPCIPv4CIDRBlock:
         default: Creates a new VPC with defined CIDR block
       AdminIngressLocation:
-        default: DASK / Bastion Allowed Access Location - IPv4 range
+        default: Bastion Allowed Access - IPv4 CIDR
       Ec2KeyPairName:
         default: Existing EC2 keypair name for instances
       Ec2BastionInstanceType:
@@ -72,10 +70,6 @@ Metadata:
         default: S3 key prefix for CFN Bootstrap Files
       S3MountBucketName:
         default: "DASK mounted S3 bucket name to work subfolder (every node)"
-      DASKJupyterECRImage:
-        default: "Custom DASK Jupyter Docker AWS ECR  image name (docker.io or ECR)"
-      DASKWorkerECRImage:
-        default: "Custom DASK Worker Docker AWS ECR  image name (dokcer.io or ECR)"
       DASKJupyterPassword:
         default: "Password for access DASK JupyterLab notebook"
       DASKFinishedSetupSNSArn:
@@ -204,11 +198,11 @@ Parameters:
     Description: The initial number of Kubernetes Node Instances
     Type: Number
     MinValue: '3'
-    MaxValue: '100'
+    MaxValue: '20'
     ConstraintDescription: must be between 1 and 10 EC2 instances.
     
   Ec2K8sNodeCapacityMax:
-    Default: '100'
+    Default: '20'
     Description: The MAXIMUM number of Kubernetes Node Instances
     Type: Number
     MinValue: '3'
@@ -247,18 +241,6 @@ Parameters:
     Description: my own S3 bucket name to mount
     Type: String
 
-
-  DASKJupyterECRImage:
-    ConstraintDescription: Custom DASK Jupyter Docker image.
-    Default: daskdev/dask-notebook
-    Description: Custom DASK Jupyter Docker image ECR name
-    Type: String
-    
-  DASKWorkerECRImage:
-    ConstraintDescription: Custom DASK Worker-Scheduler Docker image.
-    Default: daskdev/dask
-    Description: Custom DASK Worker Docker image ECR name
-    Type: String
 
   DASKJupyterPassword:
     AllowedPattern: "^[0-9a-zA-Z]+([0-9a-zA-Z-]*[0-9a-zA-Z])*$"
@@ -312,6 +294,7 @@ Parameters:
     Default: Ubuntu-16.04LTS
     AllowedValues:
     - Ubuntu-18.04LTS (not yet supported)
+    - Ubuntu-16.04LTS
     ConstraintDescription: must be a valid OS type.
   
   GoofysURL:
@@ -1167,7 +1150,7 @@ Resources:
 
           #update, install necessary software
           apt-get update
-          apt-get -y install python3-setuptools python3-pip zip
+          apt-get -y install python3-setuptools python3-pip zip mc nfs-common
           pip3 install awscli boto3 pyyaml jupyter
           
           #python2 keep for cfn tools
@@ -1321,8 +1304,6 @@ Resources:
                 cd /opt/bastion-init
                 
                 ./03-init-dask.sh "${AWS::Region}" \
-                  "${DASKJupyterECRImage}" \
-                  "${DASKWorkerECRImage}" \
                   "${AWS::StackName}" \
                   "${DASKSecurityGroup}" \
                   "${DASKJupyterPassword}" \
