@@ -33,6 +33,7 @@ HELMReleaseVersion=${30}
 FORCED_AMI_ID=${31}
 NODES_SPOT_PRICE=${32}
 S3MountBucketName=${33}
+GoofysURL=${34}
 
 echo "#################"
 echo "START INIT-KOPS."
@@ -254,7 +255,7 @@ kops create cluster \
 fi
 
 #apply subnet and policy mod
-./modify-kops-deployment.py ${AWSRegion} /opt/kops-config/${K8sClusterName}.yaml kops-cluster-additionalpolicies.json /opt/kops-config/${K8sClusterName}.MOD.yaml ${NODES_SPOT_PRICE} ${Ec2K8sNodeCapacityMax} "yes" ${S3MountBucketName}
+./modify-kops-deployment.py ${AWSRegion} /opt/kops-config/${K8sClusterName}.yaml kops-cluster-additionalpolicies.json /opt/kops-config/${K8sClusterName}.MOD.yaml ${NODES_SPOT_PRICE} ${Ec2K8sNodeCapacityMax} "yes" ${S3MountBucketName} ${GoofysURL}
 
 #check existing modified config
 if [[ ! -e "/opt/kops-config/${K8sClusterName}.MOD.yaml" ]];

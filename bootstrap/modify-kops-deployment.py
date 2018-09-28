@@ -79,6 +79,14 @@ try:
 except:
     print("define ARG8: mount S3 bucket name")
     pass
+    
+#goofys_url
+goofys_url=""
+try:
+    goofys_url=str(sys.argv[9]).lower().strip()
+except:
+    print("define ARG9: goofys URL")
+    pass
 
 ### INPUTS / end
 
@@ -207,8 +215,8 @@ kops[2]['spec']['additionalUserData'] = [{'content': '#!/bin/bash -xe\ndd if=/de
 
 
 #append goofys s3fs mount to nodes config
-if (install_goofys in ("yes","true","1")) and mount_s3fs_bucket:
-  kops[2]['spec']['additionalUserData'].append({'content': '#!/bin/bash -xe\nwget -O /usr/local/bin/goofys http://bit.ly/goofys-latest --no-verbose\nchmod +x /usr/local/bin/goofys\necho "allow_other" >> /etc/fuse.conf\n', 'type': 'text/x-shellscript', 'name': 'goofys.sh'})
+if (install_goofys in ("yes","true","1")) and mount_s3fs_bucket and goofys_url:
+  kops[2]['spec']['additionalUserData'].append({'content': '#!/bin/bash -xe\nwget -O /usr/local/bin/goofys '+goofys_url+' --no-verbose\nchmod +x /usr/local/bin/goofys\necho "allow_other" >> /etc/fuse.conf\n', 'type': 'text/x-shellscript', 'name': 'goofys.sh'})
   kops[2]['spec']['additionalUserData'].append({'content': '#!/bin/bash -xe\nmkdir -p /mnt/s3fs\nchmod 777 /mnt/s3fs\n/usr/local/bin/goofys -o allow_other -o nonempty -o rw --dir-mode 0777 --file-mode 0777 --uid 0 --gid 0 --region '+region+' '+mount_s3fs_bucket+' /mnt/s3fs\n', 'type': 'text/x-shellscript', 'name': 'mounts3fs.sh'})
 
 kops[2]['spec']['nodeLabels']["beta.kubernetes.io/fluentd-ds-ready"]="true"

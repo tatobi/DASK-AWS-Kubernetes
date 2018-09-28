@@ -35,6 +35,8 @@ Metadata:
       - KOPSReleaseVersion
       - KUBECTLReleaseVersion
       - HELMReleaseVersion
+      - AMIOSType
+      - GoofysURL
     - Label:
         default: Advanced DASK Configuration
       Parameters:
@@ -88,6 +90,10 @@ Metadata:
         default: "kubectl release number"
       HELMReleaseVersion:
         default: "helm release number"
+      AMIOSType:
+        default: "Kubernetes and bastion host OS"
+      GoofysURL:
+        default: "Download link for Goofys S3FS binary"
 
 Parameters:
   VPCIPv4CIDRBlock:
@@ -298,6 +304,19 @@ Parameters:
     MinLength: 3
     Default: 2.10.0
     Description: helm release version
+    Type: String
+    
+  AMIOSType:
+    Description: Host Operating System Type for Kubernets cluster instances
+    Type: String
+    Default: Ubuntu-16.04LTS
+    AllowedValues:
+    - Ubuntu-18.04LTS (not yet supported)
+    ConstraintDescription: must be a valid OS type.
+  
+  GoofysURL:
+    Default: https://bit.ly/goofys-latest
+    Description: Goofys binary URL
     Type: String
 
 ########################################################
@@ -947,16 +966,18 @@ Resources:
           import json
           import boto3
           import cfnresponse
-
-          AMI_VENDOR_STRING_1604="ubuntu/images/hvm-ssd/ubuntu-xenial-16.04-amd64-server*"
-          AMI_VENDOR_STRING_1804="ubuntu/images/hvm-ssd/ubuntu-bionic-18.04-amd64-server*"
+                      
+          if "${AMIOSType}" == "Ubuntu-18.04LTS":
+            AMI_VENDOR_STRING="ubuntu/images/hvm-ssd/ubuntu-bionic-18.04-amd64-server*"
+          else:
+            AMI_VENDOR_STRING="ubuntu/images/hvm-ssd/ubuntu-xenial-16.04-amd64-server*"
 
           def GetLatestAMIID():
             EC2 = boto3.client('ec2', region_name="${AWS::Region}")
             response = EC2.describe_images(
                 Owners=['099720109477'],
                 Filters=[
-                  {'Name': 'name', 'Values': [AMI_VENDOR_STRING_1604]},
+                  {'Name': 'name', 'Values': [AMI_VENDOR_STRING]},
                   {'Name': 'architecture', 'Values': ['x86_64']},
                   {'Name': 'root-device-type', 'Values': ['ebs']},
                 ],
@@ -1284,7 +1305,8 @@ Resources:
                   "${HELMReleaseVersion}" \
                   "$self_ami_id" \
                   "${Ec2K8sNodeCapacitySPOTPrice}" \
-                  "${S3MountBucketName}"
+                  "${S3MountBucketName}" \
+                  "${GoofysURL}"
                 
                 echo "/opt/bastion-init-kops.sh DONE."
                 exit 0
