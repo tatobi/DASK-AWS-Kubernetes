@@ -1,5 +1,53 @@
 #!/bin/bash
 
+AWSRegion="eu-west-1"
+VPC=${2}
+
+#aws elbv2 describe-load-balancers --region ${AWSRegion} --output text --profile tamastobi
+
+aws elbv2 describe-load-balancers --region ${AWSRegion} --output json --profile tamastobi | jq '.LoadBalancers[]'
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+exit 0
 AWSRegion=${1}
 
 echo "TEAR DOWN START."
