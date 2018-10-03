@@ -1,2 +1,3 @@
 # DASK-AWS-Kubernetes
-DASK fully automtaed (AWS CFN) deployment on Kubernetes on AWS cloud 
+
+DASK on AWS: fully automataed deployment with Kubernetes on AWS cloud 

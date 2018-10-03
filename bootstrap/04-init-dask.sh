@@ -309,17 +309,21 @@ cat <<'EOF' >> dask-connection.txt
 # DASK Jupyter Lab URL
 ########################
 
-Jupyter Lab URL: ${Jupyter_URL}
+Jupyter Lab URL: __Jupyter_URL__
 
-Jupyter Lab login password: ${DASKJupyterPassword}
+Jupyter Lab login password: __DASKJupyterPassword__
 
 ########################
 # DASK Scheduler URL
 ########################
 
-DASK scheduler URL: ${Scheduler_URL}
+DASK scheduler URL: __Scheduler_URL__
 
 EOF
+
+sed -i 's/__Jupyter_URL__/'${Jupyter_URL}'/g' dask-connection.txt
+sed -i 's/__DASKJupyterPassword__/'${DASKJupyterPassword}'/g' dask-connection.txt
+sed -i 's/__Scheduler_URL__/'${Scheduler_URL}'/g' dask-connection.txt
 
 zip --password ${DASKJupyterPassword} dask-connection.zip dask-connection.txt
 
@@ -330,7 +334,7 @@ aws s3 cp dask-connection.zip s3://${LambdaGenerateKubernetesStateS3Bucket}/dask
 ####################################
 if [[ -n ${DASKFinishedSetupSNSArn} ]];
 then
-    python notify-sns.py ${AWSRegion} "${DASKFinishedSetupSNSArn}" "${AWSStackName}" "${DASKJupyterPassword}" "${Jupyter_URL}" "${Scheduler_URL}"
+    ./notify-sns.py ${AWSRegion} "${DASKFinishedSetupSNSArn}" "${AWSStackName}" "${DASKJupyterPassword}" "${Jupyter_URL}" "${Scheduler_URL}"
 fi
 
 echo "DASK-INIT DONE. EXIT 0"
