@@ -1,12 +1,14 @@
 #!/bin/bash
 
-echo "#################"
-echo "INIT-BASTION-HOST START..."
-
 S3BootstrapBucketName=${1}
 S3BootstrapBucketPrefix=${2}
 AWSRegion=${3}
 VPCIPv4CIDRBlock=${4}
+
+echo "#################"
+echo "INIT-BASTION-HOST START..."
+
+echo "$@"
 
 #install modified AWS Bastion bootstrap
 export BASTION_BOOTSTRAP_FILE=bastion-bootstrap.sh

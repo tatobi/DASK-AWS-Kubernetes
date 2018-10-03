@@ -1,20 +1,24 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: 
-  AWS Kubernetes (K8s) / KOPS CFN stack template with DASK,  
-  Single AZ Bastion for K8s easy access,
-  Single AZ Kubernetes Mastser,
-  Cluster autocaling enabled,
-  Private Multi-AZ VPC,
-  Private Kubernets cluster,
-  S3FS mount with goofys,
-  SPOT usage, 
+  DASK on Kubernetes on AWS full automation template, 
+  Dynamic multi region deployment,
+  Cluster autocaling, 
+  Worker autoscaling, 
+  Single AZ Bastion, 
+  Single AZ Kubernetes Mastser, 
+  Private Multi-AZ VPC, 
+  Private Kubernets cluster, 
+  S3FS mount with goofys, 
+  SPOT instance usage, 
+  OpenVPN automation and access, 
+  Signed S3 URLs for configurations,
   Copyright Tamas Tobi / GitHUB @tatobi, 2018'
 
 Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
     - Label:
-        default: AWS VPC Configuration
+        default: AWS and Kubernetes Configuration
       Parameters:
       - VPCIPv4CIDRBlock
       - AdminIngressLocation
@@ -42,8 +46,10 @@ Metadata:
       Parameters:
       - DASKJupyterPassword
       - DASKFinishedSetupSNSArn
-      - DASKInstallExtraPackages
-
+      - DASKCustomJupyterDockerImage
+      - DASKCustomWorkerDockerImage
+      - DASKExtraCondaPackages
+      - DASKExtraPipPackages
 
     ParameterLabels:
       VPCIPv4CIDRBlock:
@@ -76,8 +82,6 @@ Metadata:
         default: "AWS SNS topic ARN for DASK setup finsihed notifications"
       Ec2K8sNodeCapacitySPOTPrice:
         default: "MAX Bid price /h for NODEs (if 0, or 0.0 or negative NOT applied - runs on-demand)"
-      DASKInstallExtraPackages:
-        default: "Comma separated list of install Python PIP packages on all DASK Pods"
       KOPSReleaseVersion:
         default: "KOPS relese number"
       KUBECTLReleaseVersion:
@@ -88,6 +92,14 @@ Metadata:
         default: "Kubernetes and bastion host OS"
       GoofysURL:
         default: "Download link for Goofys S3FS binary"
+      DASKCustomJupyterDockerImage:
+        default: "Custom DASK Jupyter Docker image URI"
+      DASKCustomWorkerDockerImage:
+        default: "Custom DASK Worker Docker image URI"
+      DASKExtraCondaPackages:
+        default: "Comma separated list of extra CONDA packages to install"
+      DASKExtraPipPackages:
+        default: "Comma separated list of extra Python PIP packages to install"
 
 Parameters:
   VPCIPv4CIDRBlock:
@@ -264,12 +276,6 @@ Parameters:
     Description: "AWS EC2 SPOT price in $"
     Type: String
 
-  DASKInstallExtraPackages:
-    ConstraintDescription: "Install extra Python PIP packages on DASK Pods list, comma separated"
-    Default: "boto3, awscli, numpy, scipy, matplotlib"
-    Description: "matplotlib, boto, etc..."
-    Type: String
-
   KOPSReleaseVersion:
     MinLength: 3
     Default: 1.10.0
@@ -300,6 +306,28 @@ Parameters:
   GoofysURL:
     Default: https://bit.ly/goofys-latest
     Description: Goofys binary URL
+    Type: String
+    
+  DASKCustomJupyterDockerImage:
+    ConstraintDescription: Custom created DASK Jupyter Docker image ECR path or Dockerhub name.
+    Default: ""
+    Description: DASK Jupyter Docker image URI
+    Type: String
+    
+  DASKCustomWorkerDockerImage:
+    ConstraintDescription: Custom created DASK Worker and Scheduler Docker image ECR path or Dokcerhub name.
+    Default: ""
+    Description: DASK Worker Docker image URI
+    Type: String
+    
+  DASKExtraCondaPackages:
+    Default: "scipy, numpy, pandas"
+    Description: "Comma separated list of extra CONDA packages to install"
+    Type: String
+    
+  DASKExtraPipPackages:
+    Default: "boto3, awscli"
+    Description: "Comma separated list of extra Python PIP packages to install"
     Type: String
 
 ########################################################
@@ -788,6 +816,10 @@ Resources:
           FromPort: '22'
           ToPort: '22'
           CidrIp: !Ref AdminIngressLocation
+        - IpProtocol: tcp
+          FromPort: '443'
+          ToPort: '443'
+          CidrIp: !Ref AdminIngressLocation
         - IpProtocol: -1
           FromPort: -1
           ToPort: -1
@@ -997,6 +1029,103 @@ Resources:
 
 
 ########################################################
+# Generate Kubernetes Cluster state bucket
+########################################################
+  LambdaGenerateKubernetesStateS3BucketRole:
+    Type: "AWS::IAM::Role"
+    DependsOn:
+      - VPC
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: root
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource: arn:aws:logs:*:*:*
+          - Effect: Allow
+            Action:
+            - s3:*
+            Resource: "*"
+
+  LambdaGenerateKubernetesStateS3BucketFunction:
+    Type: "AWS::Lambda::Function"
+    DependsOn:
+      - LambdaGenerateKubernetesStateS3BucketRole
+    Properties:
+      Code:
+        ZipFile: !Sub |
+          import json
+          import boto3
+          import cfnresponse
+          import string
+          import random
+          import zlib
+          import time
+          
+          def generateRandomName(N=10):
+            return ''.join(random.SystemRandom().choice(string.ascii_lowercase + string.digits) for _ in range(N))
+            
+          def createS3Bucket():
+            
+            region="${AWS::Region}"
+            s3 = boto3.resource('s3', region_name=region)
+            
+            #randompostfix=generateRandomName()
+            randompostfix=str(zlib.crc32(bytearray(("${AWS::StackName}"+str(time.time())),'ascii')))
+            s3bucketname="kops-state-"+"${AWS::StackName}"+"-"+randompostfix
+            
+            if region == "us-east-1":
+              bucket = s3.create_bucket(
+                  Bucket=s3bucketname
+              )
+            else:
+              bucket = s3.create_bucket(
+                  Bucket=s3bucketname,
+                  CreateBucketConfiguration={
+                    'LocationConstraint': region
+                  }
+              )
+            return s3bucketname
+          
+          def handler(event, context):
+            if event['RequestType'] == 'Delete':
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+              return
+            try:
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, { 'BucketName': createS3Bucket() })
+              return
+            except Exception as e:
+              print(e)
+              cfnresponse.send(event, context, cfnresponse.FAILED, { 'Error': format(e) })
+              return
+          
+      Handler: "index.handler"
+      Runtime: "python3.6"
+      Timeout: "300"
+      Role: !GetAtt LambdaGenerateKubernetesStateS3BucketRole.Arn
+
+  LambdaGenerateKubernetesStateS3Bucket:
+    Type: Custom::LambdaGenerateKubernetesStateS3Bucket
+    Properties:
+      ServiceToken: !GetAtt LambdaGenerateKubernetesStateS3BucketFunction.Arn
+      Region: !Ref "AWS::Region"
+
+########################################################
 # Bastion Configuration
 # keep bastion here because
 # for testing Bastion acts as
@@ -1098,6 +1227,7 @@ Resources:
             - Effect: Allow
               Action: 'kms:*'
               Resource: '*'
+
   
   BastionInstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -1124,6 +1254,7 @@ Resources:
     - PrivateRouteTable3
     - VPCEndPointS3
     - VPCEndPointDynamoDB
+    - LambdaGenerateKubernetesStateS3BucketFunction
     Properties:
       ImageId: !GetAtt AMIInfo.Id
       InstanceType: !Ref Ec2BastionInstanceType
@@ -1137,7 +1268,7 @@ Resources:
         - Ref: BastionSecurityGroup
       Tags:
       - Key: Name
-        Value: !Sub "k8s bastion host ${AWS::StackName}"
+        Value: !Sub "bastion.${AWS::StackName}.host"
       - Key: KubernetesCluster
         Value: !Ref AWS::StackName
       - Key: K8sBastionNumber
@@ -1150,7 +1281,7 @@ Resources:
 
           #update, install necessary software
           apt-get update
-          apt-get -y install python3-setuptools python3-pip zip mc nfs-common
+          apt-get -y install python3-setuptools python3-pip zip mc nfs-common openvpn
           pip3 install awscli boto3 pyyaml jupyter
           
           #python2 keep for cfn tools
@@ -1242,6 +1373,36 @@ Resources:
                 echo "/opt/bastion-init-host.sh DONE."
                 exit 0
 
+            '/opt/bastion-init-openvpn.sh':
+              mode: '000755'
+              owner: "root"
+              group: "root"
+              content: !Sub |
+                #!/bin/bash
+                
+                cd /opt
+                mkdir -p /opt/openvpn-keys
+                mkdir -p /opt/easy-openvpn
+                cd /opt/bastion-init
+                
+                aws s3 sync s3://${S3BootstrapBucketName}/${S3BootstrapBucketPrefix}/easy-openvpn/ /opt/easy-openvpn/ --region ${AWS::Region} --quiet
+
+                ./02-init-openvpn.sh "${VPCIPv4CIDRBlock}" \
+                    "EU" \
+                    "${AWS::StackName}" \
+                    "${AWS::StackName}" \
+                    "${AWS::StackName}" \
+                    "Email" \
+                    "OU" \
+                    "5" \
+                    "${AWS::StackName}" \
+                    "${LambdaGenerateKubernetesStateS3Bucket.BucketName}" \
+                    "${DASKJupyterPassword}" \
+                    "${AWS::Region}"
+                
+                echo "/opt/bastion-init-openvpn.sh DONE."
+                exit 0
+
             '/opt/bastion-init-kops.sh':
               mode: '000755'
               owner: "root"
@@ -1254,9 +1415,7 @@ Resources:
                 mkdir -p /opt/kops-config
                 cd /opt/bastion-init
                 
-                self_ami_id=`curl http://169.254.169.254/latest/meta-data/ami-id`
-                
-                ./02-init-kops.sh "${AWS::Region}" \
+                ./03-init-kops.sh "${AWS::Region}" \
                   "${AWS::StackName}" \
                   "${Ec2K8sMasterInstanceType}" \
                   "${Ec2K8sNodeInstanceType}" \
@@ -1286,10 +1445,11 @@ Resources:
                   "${KOPSReleaseVersion}" \
                   "${KUBECTLReleaseVersion}" \
                   "${HELMReleaseVersion}" \
-                  "$self_ami_id" \
+                  "${AMIInfo.Id}" \
                   "${Ec2K8sNodeCapacitySPOTPrice}" \
                   "${S3MountBucketName}" \
-                  "${GoofysURL}"
+                  "${GoofysURL}" \
+                  "${LambdaGenerateKubernetesStateS3Bucket.BucketName}"
                 
                 echo "/opt/bastion-init-kops.sh DONE."
                 exit 0
@@ -1303,12 +1463,18 @@ Resources:
                 
                 cd /opt/bastion-init
                 
-                ./03-init-dask.sh "${AWS::Region}" \
+                ./04-init-dask.sh "${AWS::Region}" \
                   "${AWS::StackName}" \
                   "${DASKSecurityGroup}" \
                   "${DASKJupyterPassword}" \
                   "${DASKFinishedSetupSNSArn}" \
-                  "${Ec2K8sNodeCapacityMin}"
+                  "${Ec2K8sNodeCapacityMin}" \
+                  "${DASKCustomJupyterDockerImage}" \
+                  "${DASKCustomWorkerDockerImage}" \
+                  "${DASKExtraCondaPackages}" \
+                  "${DASKExtraPipPackages}" \
+                  "${Ec2K8sNodeCapacityMax}" \
+                  "${LambdaGenerateKubernetesStateS3Bucket.BucketName}"
             
             '/opt/bastion-init-finish.sh':
               mode: '000755'
@@ -1322,7 +1488,8 @@ Resources:
                 
                 chown -R ubuntu:ubuntu /home/ubuntu
                 exit 0
-                
+            
+            
             '/opt/delete-kops-cluster.sh':
               mode: '000755'
               owner: "root"
@@ -1340,11 +1507,13 @@ Resources:
               command: "systemctl start cfn-hup.service" 
             "02-init-bastion-host":
               command: "/opt/bastion-init-host.sh"
-            "03-init-kops":
+            "03-init-openvpn":
+              command: "/opt/bastion-init-openvpn.sh"
+            "04-init-kops":
               command: "/opt/bastion-init-kops.sh >> /tmp/init-kops.log 2>&1"
-            "04-init-dask":
+            "05-init-dask":
               command: "/opt/bastion-init-dask.sh >> /tmp/init-kops.log 2>&1"
-            "05-init-finish":
+            "06-init-finish":
               command: "/opt/bastion-init-finish.sh"
     CreationPolicy:
       ResourceSignal:
@@ -1560,6 +1729,90 @@ Resources:
       ServiceToken: !GetAtt LambdaGracefulTearDown.Arn
       
 
+########################################################
+# Generate configuration presigned URLs
+########################################################
+  LambdaGenerateConfigPresignedURLsROLE:
+    Type: "AWS::IAM::Role"
+    DependsOn:
+      - VPC
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: root
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource: arn:aws:logs:*:*:*
+          - Effect: Allow
+            Action:
+            - s3:*
+            Resource: "*"
+
+  LambdaGenerateConfigPresignedURLsFunction:
+    Type: "AWS::Lambda::Function"
+    DependsOn:
+      - LambdaGenerateConfigPresignedURLsROLE
+      - BastionHost
+    Properties:
+      Code:
+        ZipFile: !Sub |
+          import json
+          import boto3
+          import cfnresponse
+          
+          region="${AWS::Region}"
+          s3 = boto3.client('s3', region_name=region)
+          URLExpires=7200
+          
+          s3bucket="${LambdaGenerateKubernetesStateS3Bucket.BucketName}"
+          vpnconfigkey="dask-secrets/openvpn-secrets.zip"
+          daskconnection="dask-secrets/dask-connection.zip"
+          
+          def generatePresignedURLForVPNConfig():
+            return s3.generate_presigned_url('get_object', Params = {'Bucket': s3bucket, 'Key': vpnconfigkey}, ExpiresIn = URLExpires)
+            
+          def generatePresignedURLForDaskConnection():
+            return s3.generate_presigned_url('get_object', Params = {'Bucket': s3bucket, 'Key': daskconnection}, ExpiresIn = URLExpires)
+            
+          def handler(event, context):
+            if event['RequestType'] == 'Delete':
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+              return
+            try:
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, { 'VPNConfig': generatePresignedURLForVPNConfig(), 'DaskConfig': generatePresignedURLForDaskConnection() })
+              return
+            except Exception as e:
+              print(e)
+              cfnresponse.send(event, context, cfnresponse.FAILED, { 'Error': format(e) })
+              return
+          
+      Handler: "index.handler"
+      Runtime: "python3.6"
+      Timeout: "300"
+      Role: !GetAtt LambdaGenerateConfigPresignedURLsROLE.Arn
+
+  LambdaGenerateConfigPresignedURLs:
+    Type: Custom::LambdaGenerateConfigPresignedURLs
+    Properties:
+      ServiceToken: !GetAtt LambdaGenerateConfigPresignedURLsFunction.Arn
+      Region: !Ref "AWS::Region"
+
+
 Outputs:
   VPCID:
     Value: !Ref VPC
@@ -1569,14 +1822,20 @@ Outputs:
     Description: IP Address of the Bastion Host. Use SSH ubuntu@BastionIP to control the cluster.
     Value: !Sub ${BastionHost.PublicIp}
 
-  JupyterNotenookURL:
-    Description: Check the AWS EC2 WEB console  - Load Balancers menu- DNS
-    Value: URL
-
-  JupyterNotenookPassword:
+  DASJupyterAndUnZIPPassword:
+    Description: Access DASK cluster and config and VPN files UNZIP password.
     Value: !Sub ${DASKJupyterPassword}
+
+  DownloadOpenVPNConfigURL:
+    Description: "Direct download OpenVPN config URL"
+    Value: !Sub ${LambdaGenerateConfigPresignedURLs.VPNConfig}
     
-  BokehURL:
-    Description: Check the AWS EC2 WEB console  - Load Balancers menu - DNS
-    Value: URL
+  DownloadDASKAccessURL:
+    Description: "Direct download DASK access config URL"
+    Value: !Sub ${LambdaGenerateConfigPresignedURLs.DaskConfig}
+
+  ConfigAndVPNS3StoragePath:
+    Description: "VPN and DASK config S3 direct access"
+    Value: !Sub |
+      s3://${LambdaGenerateKubernetesStateS3Bucket.BucketName}/dask-secrets/
 

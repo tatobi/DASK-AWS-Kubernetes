@@ -13,12 +13,13 @@ scheduler_url=sys.argv[6]
 sns = boto3.client('sns', region_name=aws_region)
 
 try:
-    snsmessage="AWS SNS notification: DASK Kubernetes cluser creation has been finished.\n\n-------------\n\nAWS CFN stack name: %s\n\nJupyter HTTPS URL: %s\n\nJupyter login password: %s\n\nScheduler HTTPS URL: %s\n\n-------------\n\n" % (cfnstackname,jupyter_url,jupyter_password,scheduler_url)
+    snsmessage="AWS SNS notification: DASK Kubernetes cluser creation has been finished.\n\n-------------\nPLEASE WAIT A FEW MINUTES FOR DNS SYNC BEFORE ACCESS URLs!\n-------------\n\nAWS CFN stack name: %s\n\nJupyter access URL: %s\n\nJupyter notebook login password: %s\n\nScheduler access URL: %s\n\n-------------\n\n" % (cfnstackname,jupyter_url,jupyter_password,scheduler_url)
 
     response = sns.publish(
         TopicArn=snstopicarn,
         Message=snsmessage,
-        Subject='DASK Kubernetes cluster on AWS creation has been finished: '+cfnstackname,
+        Subject='AWS DASK cluster creation has been finished: '+cfnstackname,
     )
 except Exception as e:
     print(e)
+

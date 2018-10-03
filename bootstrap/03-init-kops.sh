@@ -34,9 +34,12 @@ FORCED_AMI_ID=${31}
 NODES_SPOT_PRICE=${32}
 S3MountBucketName=${33}
 GoofysURL=${34}
+LambdaGenerateKubernetesStateS3Bucket=${35}
 
 echo "#################"
 echo "START INIT-KOPS."
+
+echo "$@"
 
 AWSCfnStackName=`echo "${AWSCfnStackName}" | tr '[:upper:]' '[:lower:]'`
 randomstuff=`cat /dev/urandom | tr -dc 'a-z0-9' | head -c 8`
@@ -103,7 +106,12 @@ echo "K8sClusterName: ${K8sClusterName}"
 #create s3 bucket
 if [[ ! -e s3-kops-state.txt ]];
 then
-    s3bucket="kops-state-${AWSCfnStackName}-${randomstuff}"
+    if [[ ! -n ${LambdaGenerateKubernetesStateS3Bucket} ]];
+    then
+      s3bucket="kops-state-${AWSCfnStackName}-${randomstuff}"
+    else
+      s3bucket=${LambdaGenerateKubernetesStateS3Bucket}
+    fi
     echo "Create bucket: ${s3bucket}"
     echo ${s3bucket} > s3-kops-state.txt
 else

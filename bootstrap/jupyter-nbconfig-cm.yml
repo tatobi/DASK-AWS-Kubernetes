@@ -1,0 +1,10 @@
+apiVersion: v1
+data:    
+  notebook.json: |
+    {    
+      "last_modified_buffer": 72000,
+      "last_modified_check_margin": 72000
+    }    
+kind: ConfigMap
+metadata:
+  name: dask-1-jupyter-config-2

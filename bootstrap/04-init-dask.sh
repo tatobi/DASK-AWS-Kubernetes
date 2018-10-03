@@ -9,6 +9,29 @@ BastionSecurityGroup=${3}
 DASKJupyterPassword=${4}
 DASKFinishedSetupSNSArn=${5}
 Ec2K8sNodeCapacityMin=${6}
+DASKCustomJupyterDockerImage=${7}
+DASKCustomWorkerDockerImage=${8}
+DASKExtraCondaPackages=${9}
+DASKExtraPipPackages=${10}
+Ec2K8sNodeCapacityMax=${11}
+LambdaGenerateKubernetesStateS3Bucket=${12}
+
+echo "#################"
+echo "START INIT-DASK."
+
+echo "$@"
+
+DASKExtraCondaPackages_NO_WHITESPACE=""
+if [[ -n ${DASKExtraCondaPackages} ]];
+then
+    DASKExtraCondaPackages_NO_WHITESPACE="$(echo -e "${DASKExtraCondaPackages}" | tr -d '[:space:]')"
+fi
+
+DASKExtraPipPackages_NO_WHITESPACE=""
+if [[ -n ${DASKExtraPipPackages} ]];
+then
+    DASKExtraPipPackages_NO_WHITESPACE="$(echo -e "${DASKExtraPipPackages}" | tr -d '[:space:]')"
+fi
 
 randomstuff=`cat /dev/urandom | tr -dc 'a-z0-9' | head -c 8`
 instance_id=`curl http://169.254.169.254/latest/meta-data/instance-id`
@@ -180,11 +203,39 @@ sleep 5
 
 
 ####################################
+#Modify Jupyter LB to ingress only
+####################################
+echo "Modify Jupyter SVC deployment to ingress only..."
+kubectl get svc ${jupyter_svc} -o yaml --export > "${jupyter_svc}.yml"
+
+./modify-jupyter-scheduler-ingress.py "${jupyter_svc}.yml" "${jupyter_svc}.MOD.yml"
+kubectl replace -f "${jupyter_svc}.MOD.yml" --force
+
+sleep 5
+
+####################################
+#Modify Scheduler LB to ingress only
+####################################
+echo "Modify Scheduler SVC deployment to ingress only..."
+kubectl get svc ${scheduler_svc} -o yaml --export > "${scheduler_svc}.yml"
+
+./modify-jupyter-scheduler-ingress.py "${scheduler_svc}.yml" "${scheduler_svc}.MOD.yml"
+kubectl replace -f "${scheduler_svc}.MOD.yml" --force
+
+sleep 5
+
+####################################
+#CREATE new notebook config CM json
+####################################
+
+kubectl create -f jupyter-nbconfig-cm.yml
+
+####################################
 #modify worker deployment
 ####################################
 echo "Modify DASK Worker deployment to use AWS S3FS and user custom Image ..."
 kubectl get deploy ${worker_deploy} -o yaml --export > "${worker_deploy}.yml"
-./modify-worker-img.py "${worker_deploy}.yml" "${KubernetesWorkerECRImage}" "${AWSRegion}" "${worker_deploy}.MOD.yml" "${Ec2K8sNodeCapacityMin}"
+./modify-worker-img.py "${worker_deploy}.yml" "${DASKCustomWorkerDockerImage}" "${AWSRegion}" "${worker_deploy}.MOD.yml" "${Ec2K8sNodeCapacityMin}" "${DASKExtraCondaPackages_NO_WHITESPACE}" "${DASKExtraPipPackages_NO_WHITESPACE}"
 kubectl replace -f "${worker_deploy}.MOD.yml" --force
 
 sleep 5
@@ -194,7 +245,7 @@ sleep 5
 ####################################
 echo "Modify DASK Scheduler deployment to use AWS S3FS via S3FS and user custom Image ..."
 kubectl get deploy ${scheduler_deploy} -o yaml --export > "${scheduler_deploy}.yml"
-./modify-worker-img.py "${scheduler_deploy}.yml" "${KubernetesWorkerECRImage}" "${AWSRegion}" "${scheduler_deploy}.MOD.yml" "1"
+./modify-worker-img.py "${scheduler_deploy}.yml" "${DASKCustomWorkerDockerImage}" "${AWSRegion}" "${scheduler_deploy}.MOD.yml" "1"
 kubectl replace -f "${scheduler_deploy}.MOD.yml" --force
 
 sleep 5
@@ -205,7 +256,7 @@ sleep 5
 ####################################
 echo "Modify DASK Jupyter deployment to use AWS S3FS and use custom Image ..."
 kubectl get deploy ${jupyter_deploy} -o yaml --export > "${jupyter_deploy}.yml"
-./modify-jupyter-img-s3fs.py "${jupyter_deploy}.yml" "${KubernetesJupyterECRImage}" "${AWSRegion}" "${jupyter_deploy}.MOD.yml"
+./modify-jupyter-img.py "${jupyter_deploy}.yml" "${DASKCustomJupyterDockerImage}" "${AWSRegion}" "${jupyter_deploy}.MOD.yml" "${DASKExtraCondaPackages_NO_WHITESPACE}" "${DASKExtraPipPackages_NO_WHITESPACE}"
 kubectl replace -f "${jupyter_deploy}.MOD.yml" --force
 
 
@@ -226,37 +277,16 @@ do
     fi
 done
 
-
-echo "Setup DASK services accessible via AWS NLB ... (NLB is reqired for API GW HTTPS access)"
-
-####################################
-#modify Jupyter SVC deployment to NLB
-####################################
-echo "Modify Jupyter SVC deployment and NLB ingress ..."
-kubectl get svc ${jupyter_svc} -o yaml --export > "${jupyter_svc}.yml"
-
-#modify ingress to nodeport
-./modify-dask-jupyter-ingress.py "${jupyter_svc}.yml" "${jupyter_svc}.MOD.yml"
-kubectl replace -f "${jupyter_svc}.MOD.yml" --force
-
-sleep 5
-
+sleep 10
 
 ####################################
-#modify Scheduler SVC deployment to NLB
+#setup horizontal autoscaling for workers
 ####################################
-echo "Modify Scheduler SVC deployment and NLB ingress..."
-kubectl get svc ${scheduler_svc} -o yaml --export > "${scheduler_svc}.yml"
 
-#step 1: delete original scheduler svc
-kubectl delete svc ${scheduler_svc} --force
-sleep 5
-
-#step 2: create new, nodeport type LB
-sed -i 's/__REPLACE_CLUSTERNAME__/'${DASKCluserName}'/g' scheduler-ingress-service-nlb.yaml
-kubectl apply -f scheduler-ingress-service-nlb.yaml
-
-sleep 5
+for rs in `kubectl get rs  -o wide | grep worker | awk '{print $1}'`;do 
+    echo "Horizontal autoscaling for $rs ...";
+    kubectl autoscale rs ${rs} --min=${Ec2K8sNodeCapacityMin} --max=${Ec2K8sNodeCapacityMax} --cpu-percent=90 
+done
 
 ####################################
 #fix elb subnet registrations bug
@@ -266,11 +296,41 @@ echo "fix elb subnet registrations bug ..."
 
 
 ####################################
+#extract information
+####################################
+Jupyter_LB_DNS=`kubectl get svc -o wide | grep ${jupyter_svc} | awk '{print $4}'`
+Scheduler_LB_DNS=`kubectl get svc -o wide | grep ${scheduler_svc} | awk '{print $4}'`
+
+Jupyter_URL="http://${Jupyter_LB_DNS}"
+Scheduler_URL="https://${Scheduler_LB_DNS}"
+
+cat <<'EOF' >> dask-connection.txt
+########################
+# DASK Jupyter Lab URL
+########################
+
+Jupyter Lab URL: ${Jupyter_URL}
+
+Jupyter Lab login password: ${DASKJupyterPassword}
+
+########################
+# DASK Scheduler URL
+########################
+
+DASK scheduler URL: ${Scheduler_URL}
+
+EOF
+
+zip --password ${DASKJupyterPassword} dask-connection.zip dask-connection.txt
+
+aws s3 cp dask-connection.zip s3://${LambdaGenerateKubernetesStateS3Bucket}/dask-secrets/ --region ${AWSRegion}
+
+####################################
 #notify SNS when finished
 ####################################
 if [[ -n ${DASKFinishedSetupSNSArn} ]];
 then
-    python notify-sns.py ${AWSRegion} "${DASKFinishedSetupSNSArn}" "${AWSStackName}" "${DASKJupyterPassword}" "${JUPYTER_HOST}" "${SCHEDULER_HOST}"
+    python notify-sns.py ${AWSRegion} "${DASKFinishedSetupSNSArn}" "${AWSStackName}" "${DASKJupyterPassword}" "${Jupyter_URL}" "${Scheduler_URL}"
 fi
 
 echo "DASK-INIT DONE. EXIT 0"

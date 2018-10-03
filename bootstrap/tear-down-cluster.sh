@@ -27,7 +27,7 @@ do
     if [[ -n "${N}" ]];
     then
       echo "DELETE TARGET GROUP: ${N} ...";
-      aws elbv2 delete-target-group --target-group-arn $j --region ${AWSRegion}
+      aws elbv2 delete-target-group --target-group-arn $j --region ${AWSRegion} > /dev/null 2>&1
     fi
   done
   
@@ -39,7 +39,7 @@ do
     if [[ -n "${N}" ]];
     then
       echo "DELETE TARGET GROUP: ${N} ...";
-      aws elbv2 delete-target-group --target-group-arn $j --region ${AWSRegion}
+      aws elbv2 delete-target-group --target-group-arn $j --region ${AWSRegion} > /dev/null 2>&1
     fi
   done
 done
@@ -47,11 +47,11 @@ done
 #wait for target group deletion, it is async wait to remove ALB target groups
 if [[ "${ingress}" == "YES" ]];
 then
-  sleep 20
+  sleep 5
 fi
 
 #delete cluster
-kops delete cluster --name $KOPS_CLUSTER_NAME --yes >> /tmp/init-kops.log 2>&1
+kops delete cluster --name $KOPS_CLUSTER_NAME --yes
 
 #delete local r53 dns zone
 if [[ -e "/opt/kops-state/KOPS_R53_PRIVATE_HOSTED_ZONE_ID" ]];
@@ -59,7 +59,7 @@ then
   R53ZID=`cat /opt/kops-state/KOPS_R53_PRIVATE_HOSTED_ZONE_ID`
   if [[ -n ${R53ZID} ]];
   then
-    aws route53 delete-hosted-zone --id ${R53ZID} --region ${AWSRegion}
+    aws route53 delete-hosted-zone --id ${R53ZID} --region ${AWSRegion} > /dev/null 2>&1
   else
     echo "Missing R53 Zone ID!"
   fi
@@ -67,14 +67,17 @@ fi
 
 #delete kops state bucket
 S3BUCKET=`cat /opt/kops-state/KOPS_STATE_STORE | cut -d '/' -f 3`
-./purge-s3-versioned-bucket.py ${S3BUCKET} ${AWSRegion}
+./purge-s3-versioned-bucket.py ${S3BUCKET} ${AWSRegion} > /dev/null 2>&1
 
 #delete log group
 LOG2=`cat /opt/kops-state/KOPS_AWSLOGS`
-if [[ -n ${LOG2} ]];
+if [[ -e ${LOG2} ]];
 then
-  aws logs delete-log-group --log-group-name ${LOG2} --region ${AWSRegion}
+  LOG=`cat ${LOG2}`
+  if [[ -n ${LOG} ]];
+  then
+    aws logs delete-log-group --log-group-name ${LOG} --region ${AWSRegion} > /dev/null 2>&1
+  fi
 fi
-
 echo "TEAR DOWN DONE. EXIT 0"
 exit 0
