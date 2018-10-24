@@ -47,5 +47,14 @@ The deployment architecture consist of two parts, the first is the Kubernetes ru
 
 # Parameters
 
+# References
+
+There are 3 open source projects I created previously, the current solution consists common parts from them:
+
+[#1: kubernetes-aws](https://github.com/totalcloudconsulting/kubernetes-aws)
+
+[#2: aws-dask-kubernetes](https://github.com/OpenSatori/AWS-DASK-Kubernetes)
+
+[#3: easy-openvpn](https://github.com/tatobi/easy-openvpn)
 
 
