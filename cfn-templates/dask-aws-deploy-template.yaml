@@ -57,7 +57,7 @@ Metadata:
       AdminIngressLocation:
         default: Bastion Allowed Access - IPv4 CIDR
       Ec2KeyPairName:
-        default: Existing EC2 keypair name for instances
+        default: REQUIRED! Existing EC2 keypair name for instances
       Ec2BastionInstanceType:
         default: Bastion instance type
       Ec2K8sMasterInstanceType:
@@ -67,7 +67,7 @@ Metadata:
       Ec2K8sNodeCapacityMin:
         default: K8s AutoScaling MINIMUM Node Number
       Ec2K8sNodeCapacityMax:
-        default: K8s AutoScaling MAXIMUM Node Number (If Autoscaling Plugin enabled!)
+        default: K8s AutoScaling MAXIMUM Node Number
       Ec2EBSK8sDiskSizeGb:
         default: K8s Instances Disk Size (GB)
       S3BootstrapBucketName:
@@ -299,7 +299,7 @@ Parameters:
     Type: String
     Default: Ubuntu-16.04LTS
     AllowedValues:
-    - Ubuntu-18.04LTS (not yet supported)
+    #- Ubuntu-18.04LTS (not yet supported)
     - Ubuntu-16.04LTS
     ConstraintDescription: must be a valid OS type.
   
@@ -1083,11 +1083,12 @@ Resources:
           def createS3Bucket():
             
             region="${AWS::Region}"
+            stackname="${AWS::StackName}"
             s3 = boto3.resource('s3', region_name=region)
             
             #randompostfix=generateRandomName()
             randompostfix=str(zlib.crc32(bytearray(("${AWS::StackName}"+str(time.time())),'ascii')))
-            s3bucketname="kops-state-"+"${AWS::StackName}"+"-"+randompostfix
+            s3bucketname="kops-state-"+stackname.lower()+"-"+randompostfix
             
             if region == "us-east-1":
               bucket = s3.create_bucket(
