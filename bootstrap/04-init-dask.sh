@@ -298,18 +298,43 @@ echo "fix elb subnet registrations bug ..."
 ####################################
 #extract information
 ####################################
-Jupyter_LB_DNS=`kubectl get svc -o wide | grep ${jupyter_svc} | awk '{print $4}'`
-Scheduler_LB_DNS=`kubectl get svc -o wide | grep ${scheduler_svc} | awk '{print $4}'`
 
-Jupyter_URL="http://${Jupyter_LB_DNS}"
-Scheduler_URL="https://${Scheduler_LB_DNS}"
+for _ in {1..90};
+do
+    Jupyter_LB_DNS=`kubectl get svc -o wide | grep ${jupyter_svc} | awk '{print $4}'`
+    if [[ -n ${Jupyter_LB_DNS} ]];
+    then
+        break;
+    else
+        echo "Wait for Jupyter_LB_DNS .. ${Jupyter_LB_DNS}"
+        sleep 3
+        continue;
+    fi
+done
+
+for _ in {1..90};
+do
+    Scheduler_LB_DNS=`kubectl get svc -o wide | grep ${scheduler_svc} | awk '{print $4}'`
+    if [[ -n ${Scheduler_LB_DNS} ]];
+    then
+        break;
+    else
+        echo "Wait for Scheduler_LB_DNS .. ${Scheduler_LB_DNS}"
+        sleep 3
+        continue;
+    fi
+done
+
+echo "Jupyter_LB_DNS: ${Jupyter_LB_DNS}"
+echo "Scheduler_LB_DNS: ${Scheduler_LB_DNS}"
+
 
 cat <<'EOF' >> dask-connection.txt
 ########################
 # DASK Jupyter Lab URL
 ########################
 
-Jupyter Lab URL: __Jupyter_URL__
+Jupyter Lab URL: http://__Jupyter_URL__
 
 Jupyter Lab login password: __DASKJupyterPassword__
 
@@ -317,13 +342,13 @@ Jupyter Lab login password: __DASKJupyterPassword__
 # DASK Scheduler URL
 ########################
 
-DASK scheduler URL: __Scheduler_URL__
+DASK scheduler URL: http://__Scheduler_URL__
 
 EOF
 
-sed -i 's/__Jupyter_URL__/'${Jupyter_URL}'/g' dask-connection.txt
+sed -i 's/__Jupyter_URL__/'${Jupyter_LB_DNS}'/g' dask-connection.txt
 sed -i 's/__DASKJupyterPassword__/'${DASKJupyterPassword}'/g' dask-connection.txt
-sed -i 's/__Scheduler_URL__/'${Scheduler_URL}'/g' dask-connection.txt
+sed -i 's/__Scheduler_URL__/'${Scheduler_LB_DNS}'/g' dask-connection.txt
 
 zip --password ${DASKJupyterPassword} dask-connection.zip dask-connection.txt
 

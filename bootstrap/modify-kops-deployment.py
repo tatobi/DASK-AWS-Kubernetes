@@ -63,19 +63,11 @@ except:
     print("define ARG6: max number of nodes, unless equals min=max")
     pass
 
-
-#install goofys
-install_goofys=None
-try:
-    install_goofys=str(sys.argv[7]).lower().strip()
-except:
-    print("define ARG7: install goofys s3sfs mounter")
-    pass
     
 #mount s3fs bucket
 mount_s3fs_bucket=None
 try:
-    mount_s3fs_bucket=str(sys.argv[8]).lower().strip()
+    mount_s3fs_bucket=str(sys.argv[7]).lower().strip()
 except:
     print("define ARG8: mount S3 bucket name")
     pass
@@ -83,7 +75,7 @@ except:
 #goofys_url
 goofys_url=""
 try:
-    goofys_url=str(sys.argv[9]).lower().strip()
+    goofys_url=str(sys.argv[8]).lower().strip()
 except:
     print("define ARG9: goofys URL")
     pass
@@ -215,29 +207,36 @@ kops[2]['spec']['additionalUserData'] = [{'content': '#!/bin/bash -xe\ndd if=/de
 
 
 #append goofys s3fs mount to nodes config
-if (install_goofys in ("yes","true","1")) and mount_s3fs_bucket and goofys_url:
-  kops[2]['spec']['additionalUserData'].append({'content': '#!/bin/bash -xe\nwget -O /usr/local/bin/goofys '+goofys_url+' --no-verbose\nchmod +x /usr/local/bin/goofys\necho "allow_other" >> /etc/fuse.conf\n', 'type': 'text/x-shellscript', 'name': 'goofys.sh'})
-  kops[2]['spec']['additionalUserData'].append({'content': '#!/bin/bash -xe\nmkdir -p /mnt/s3fs\nchmod 777 /mnt/s3fs\n/usr/local/bin/goofys -o allow_other -o nonempty -o rw --dir-mode 0777 --file-mode 0777 --uid 0 --gid 0 --region '+region+' '+mount_s3fs_bucket+' /mnt/s3fs\n', 'type': 'text/x-shellscript', 'name': 'mounts3fs.sh'})
+if mount_s3fs_bucket and goofys_url:
+  if ((mount_s3fs_bucket != "NONE") and (goofys_url != "NONE")):
+    kops[2]['spec']['additionalUserData'].append({'content': '#!/bin/bash -xe\nwget -O /usr/local/bin/goofys '+goofys_url+' --no-verbose\nchmod +x /usr/local/bin/goofys\necho "allow_other" >> /etc/fuse.conf\n', 'type': 'text/x-shellscript', 'name': 'goofys.sh'})
+    kops[2]['spec']['additionalUserData'].append({'content': '#!/bin/bash -xe\nmkdir -p /mnt/s3fs\nchmod 777 /mnt/s3fs\n/usr/local/bin/goofys -o allow_other -o nonempty -o rw --dir-mode 0777 --file-mode 0777 --uid 0 --gid 0 --region '+region+' '+mount_s3fs_bucket+' /mnt/s3fs\n', 'type': 'text/x-shellscript', 'name': 'mounts3fs.sh'})
 
 kops[2]['spec']['nodeLabels']["beta.kubernetes.io/fluentd-ds-ready"]="true"
 ##########################
 
 
 if max_spot_price_for_node:
-  print("Set MAX SPOT price for NODES: ",str(max_spot_price_for_node))
-  try:
-    max_spot_price_for_node=float(max_spot_price_for_node)
-    if max_spot_price_for_node > 0.0:
-      kops[2]['spec']['maxPrice']=str(max_spot_price_for_node)
-  except Exception as e:
-    print("SPOT ERROR:",str(e))
-    pass
+  if max_spot_price_for_node != "NONE":
+    print("Set MAX SPOT price for NODES: ",str(max_spot_price_for_node))
+    try:
+      max_spot_price_for_node=float(max_spot_price_for_node)
+      if max_spot_price_for_node > 0.0:
+        kops[2]['spec']['maxPrice']=str(max_spot_price_for_node)
+    except Exception as e:
+      print("SPOT ERROR:",str(e))
+      pass
 
 #set maximum size for NODES
 if max_nodes_capacity:
-  print("Set MAX ASG size for NODES: ",str(max_nodes_capacity))
-  kops[2]['spec']['maxSize']=int(max_nodes_capacity)
-
+  if max_nodes_capacity != "NONE":
+    print("Set MAX ASG size for NODES: ",str(max_nodes_capacity))
+    try:
+      kops[2]['spec']['maxSize']=int(max_nodes_capacity)
+    except Exception as e:
+      print("MAXSIZE ERROR:",str(e))
+      pass
+      
 print("Apply new policies ...")
 if os.path.exists(kopsconf_additinalpolicies):
   print("Add policy file: ", kopsconf_additinalpolicies)

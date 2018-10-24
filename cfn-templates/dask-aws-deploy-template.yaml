@@ -81,7 +81,7 @@ Metadata:
       DASKFinishedSetupSNSArn:
         default: "AWS SNS topic ARN for DASK setup finsihed notifications"
       Ec2K8sNodeCapacitySPOTPrice:
-        default: "MAX Bid price /h for NODEs (if 0, or 0.0 or negative NOT applied - runs on-demand)"
+        default: "K8s Nodes SPOT MAX Bid price /h (if 0, or 0.0 or negative NOT applied - runs on-demand)"
       KOPSReleaseVersion:
         default: "KOPS relese number"
       KUBECTLReleaseVersion:
@@ -272,7 +272,7 @@ Parameters:
 
   Ec2K8sNodeCapacitySPOTPrice:
     ConstraintDescription: "If not ZERO or negative, K8s NODES running with SPOT to save money. Specify maximum bid price per hour here."
-    Default: "0.12"
+    Default: ""
     Description: "AWS EC2 SPOT price in $"
     Type: String
 

@@ -41,6 +41,27 @@ echo "START INIT-KOPS."
 
 echo "$@"
 
+if [[ ! -n ${NODES_SPOT_PRICE} ]];
+then
+  NODES_SPOT_PRICE="0"
+fi
+
+
+if [[ ! -n ${Ec2K8sNodeCapacityMax} ]];
+then
+  Ec2K8sNodeCapacityMax="3"
+fi
+
+if [[ ! -n ${S3MountBucketName} ]];
+then
+  S3MountBucketName="NONE"
+fi
+
+if [[ ! -n ${GoofysURL} ]];
+then
+  GoofysURL="NONE"
+fi
+
 AWSCfnStackName=`echo "${AWSCfnStackName}" | tr '[:upper:]' '[:lower:]'`
 randomstuff=`cat /dev/urandom | tr -dc 'a-z0-9' | head -c 8`
 
@@ -263,7 +284,7 @@ kops create cluster \
 fi
 
 #apply subnet and policy mod
-./modify-kops-deployment.py ${AWSRegion} /opt/kops-config/${K8sClusterName}.yaml kops-cluster-additionalpolicies.json /opt/kops-config/${K8sClusterName}.MOD.yaml ${NODES_SPOT_PRICE} ${Ec2K8sNodeCapacityMax} "yes" ${S3MountBucketName} ${GoofysURL}
+./modify-kops-deployment.py ${AWSRegion} /opt/kops-config/${K8sClusterName}.yaml kops-cluster-additionalpolicies.json /opt/kops-config/${K8sClusterName}.MOD.yaml ${NODES_SPOT_PRICE} ${Ec2K8sNodeCapacityMax} ${S3MountBucketName} ${GoofysURL}
 
 #check existing modified config
 if [[ ! -e "/opt/kops-config/${K8sClusterName}.MOD.yaml" ]];
