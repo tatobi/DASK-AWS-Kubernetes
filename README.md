@@ -181,7 +181,7 @@ Open URLs:
 
 **DASK scheduler URL:** http://internal-........elb.amazonaws.com/
 
-Login to Jupyter Lab with **DASJupyterAndUnZIPPassword**
+Login to Jupyter Lab with **DASJupyterAndUnZIPPassword** Output parameter.
 
 **NOTE:** These are AWS internal Loadbalancers, they have internal private IP addresses, so there is no external public acccess, only via OpenVPN.
 

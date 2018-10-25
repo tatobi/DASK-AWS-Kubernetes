@@ -1778,7 +1778,7 @@ Resources:
           
           region="${AWS::Region}"
           s3 = boto3.client('s3', region_name=region)
-          URLExpires=7200
+          URLExpires=172800
           
           s3bucket="${LambdaGenerateKubernetesStateS3Bucket.BucketName}"
           vpnconfigkey="dask-secrets/openvpn-secrets.zip"
